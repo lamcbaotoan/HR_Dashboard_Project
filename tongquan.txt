@@ -1,3 +1,165 @@
+Backend: Python.
+Frontend: React.js.
+Database: MySQL và SQL Server.
+IDE: VS Code.
+tên projec: HR_Dashboard_Project
+//////////
+Vấn đề hiện tại
+Hiện nay, công ty chúng ta đang vận hành hai hệ thống độc lập:
+Hệ thống Quản lý Nhân sự (HR):
+Quản lý thông tin về ứng viên, nhân viên, phòng ban, chức vụ, cổ đông và cổ tức.
+Là nguồn dữ liệu chính cho các quyết định và hoạt động quản lý nhân sự.
+Hệ thống Tính lương (Payroll):
+Quản lý tiền lương, tiền thưởng, các khoản khấu trừ và cổ tức cổ đông.
+Dùng để xử lý bảng lương và tạo các báo cáo tài chính liên quan đến thu nhập nhân viên.
+Hai hệ thống này đã vận hành ổn định trong thời gian dài và đóng vai trò quan trọng trong hoạt động của công ty.
+Tuy nhiên, do chúng hoạt động độc lập, một số hạn chế nghiêm trọng đã bắt đầu xuất hiện khi quy mô công ty tăng trưởng.
+Các thách thức chính
+Tốn thời gian và công sức khi tổng hợp dữ liệu:
+Khi cần hợp nhất dữ liệu HR và Payroll cho các báo cáo quản lý hoặc truy vấn từ cổ đông, hai bộ phận phải làm việc riêng biệt và gộp thủ công.
+Điều này làm mất nhiều thời gian và làm chậm quá trình ra quyết định của ban quản lý.
+Dữ liệu không đồng nhất:
+Khi nhân viên thay đổi chức vụ, lương hoặc phòng ban, thông tin thường được cập nhật trong hệ thống HR nhưng không được đồng bộ sang Payroll.
+Dẫn đến sai lệch trong việc tính lương, ảnh hưởng đến niềm tin của nhân viên và uy tín công ty.
+Khó khăn trong việc tạo báo cáo tổng hợp:
+Hệ thống HR chỉ có báo cáo về nhân viên, trong khi Payroll chỉ cung cấp báo cáo về lương và cổ tức.
+Không có cách nào để tạo báo cáo tổng hợp giữa thông tin nhân sự và tài chính, khiến cho kế hoạch chiến lược kém chính xác.
+Thiếu khả năng quản lý chủ động:
+Hiện tại không có cảnh báo thông minh cho các sự kiện quan trọng như:
+Nhân viên sắp đến kỷ niệm làm việc (1, 5, 10 năm...).
+Nhân viên có số ngày nghỉ chưa dùng quá nhiều.
+Thay đổi phúc lợi ảnh hưởng đến bảng lương.
+Yêu cầu kinh doanh
+Với quy mô công ty ngày càng lớn, chúng ta cần một giải pháp tích hợp mạnh mẽ để khắc phục các vấn đề trên.
+Tuy nhiên, do hai hệ thống HR và Payroll hiện đang ổn định, chúng ta không muốn thay đổi hoặc thay thế chúng.
+Giải pháp đề xuất là xây dựng một Dashboard tích hợp, có chức năng:
+Tích hợp thông tin từ hai hệ thống:
+Kết nối dữ liệu từ HUMAN_2025 (SQL Server) và PAYROLL (MySQL).
+Ánh xạ dữ liệu nhân viên, bảng lương, phòng ban, chức vụ.
+Phát triển API để truy xuất và cập nhật dữ liệu giữa hai hệ thống.
+Quản lý nhân viên:
+Hiển thị danh sách nhân viên từ HUMAN_2025.
+Tìm kiếm theo ID, tên, phòng ban hoặc chức vụ.
+Thêm mới nhân viên vào HUMAN_2025 và đồng bộ dữ liệu cơ bản sang PAYROLL.
+Cập nhật thông tin nhân viên (phòng ban, chức vụ, trạng thái làm việc) trên HUMAN_2025 và đồng bộ với PAYROLL nếu có liên quan.
+Xóa nhân viên (có kiểm tra ràng buộc nếu tồn tại dữ liệu lương hoặc cổ tức).
+Quản lý bảng lương & chấm công:
+Hiển thị thông tin bảng lương từ PAYROLL (lương cơ bản, thưởng, khấu trừ, lương ròng).
+Xem lịch sử lương theo tháng.
+Hiển thị dữ liệu chấm công: số ngày làm việc, vắng mặt, nghỉ phép.
+Cập nhật chi tiết bảng lương khi có thay đổi trong HR.
+Quản lý phòng ban & chức vụ:
+Hiển thị danh sách phòng ban và chức vụ từ HUMAN_2025.
+Thêm, sửa hoặc xóa (có kiểm tra ràng buộc nếu có nhân viên đang được gán).
+Báo cáo & phân tích:
+Báo cáo HR (HUMAN_2025): tổng số nhân viên, phân bố theo phòng ban, trạng thái làm việc.
+Báo cáo Payroll: tổng ngân sách lương, mức lương trung bình theo phòng ban.
+Báo cáo cổ tức (HUMAN_2025): tổng cổ tức cổ đông và cổ đông là nhân viên.
+Tích hợp biểu đồ trực quan cho phép so sánh dữ liệu theo thời gian.
+Hệ thống cảnh báo & thông báo:
+Thông báo nhân viên sắp đến kỷ niệm làm việc.
+Cảnh báo khi nhân viên vượt quá số ngày nghỉ cho phép.
+Cảnh báo khi có chênh lệch lớn giữa các kỳ lương.
+Gửi email thông báo bảng lương hàng tháng cho nhân viên.
+Bảo mật & phân quyền người dùng:
+Đăng nhập bằng tên người dùng và mật khẩu.
+Phân quyền theo vai trò: Admin, HR Manager, Payroll Manager, Employee.
+Nhân viên chỉ xem được thông tin và bảng lương của chính họ.
+HR Manager được phép xem/chỉnh sửa dữ liệu nhân sự.
+Payroll Manager được phép xem/chỉnh sửa dữ liệu lương.
+Admin có toàn quyền truy cập.
+Yêu cầu kỹ thuật chính
+Duy trì hoạt động của hai hệ thống hiện có:
+Không thay đổi cấu trúc cơ sở dữ liệu, logic xử lý hoặc chức năng gốc.
+Phát triển ứng dụng Dashboard độc lập:
+Kết nối trực tiếp đến cả hai hệ thống HR và Payroll để truy xuất và xử lý dữ liệu.
+Đảm bảo đồng bộ dữ liệu khi cập nhật:
+Mọi thay đổi (thêm/sửa/xóa) phải được phản ánh ngay lập tức trên cả hai hệ thống.
+Đảm bảo an toàn dữ liệu:
+Xác thực người dùng và áp dụng kiểm soát truy cập để đảm bảo chỉ người có thẩm quyền được truy cập hoặc chỉnh sửa.
+///////////////
+Dưới đây là cấu trúc thư mục hoàn chỉnh được tổng hợp từ các hình ảnh bạn cung cấp:
+
+```
+backend/
+│   ├── api/
+│   │   └── v1/
+│   │       ├── api.py
+│   │       └── endpoints/
+│   │           ├── departments.py
+│   │           ├── employees.py
+│   │           ├── login.py
+│   │           ├── notifications.py
+│   │           ├── payroll.py
+│   │           ├── positions.py
+│   │           ├── reports.py
+│   │           └── users.py
+│   ├── auth/
+│   │   └── auth.py
+│   ├── core/
+│   │   ├── config.py
+│   │   └── security.py
+│   ├── crud/
+│   │   ├── crud_employee.py
+│   │   ├── crud_hr.py
+│   │   ├── crud_notification.py
+│   │   ├── crud_payroll.py
+│   │   └── crud_user.py
+│   ├── services/
+│   │   └── alert_service.py
+│   ├── .env
+│   ├── dashboard_auth.db
+│   ├── database.py
+│   ├── main.py
+│   ├── models.py
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── requirements.txt
+│   ├── schemas.py
+│   └── seed_admin.py
+////////////////////////
+frontend/
+├── node_modules/
+├── public/
+│   └── index.html
+├── src/
+│   ├── components/
+│   │   ├── AddEmployeeModal.js
+│   │   ├── DepartmentModal.js
+│   │   ├── EditEmployeeModal.js
+│   │   ├── EditSalaryModal.js
+│   │   ├── Layout.js
+│   │   ├── NotificationsBell.js
+│   │   ├── PositionModal.js
+│   │   ├── ProtectedRoute.js
+│   │   ├── ResetPasswordModal.js
+│   │   ├── SetRoleModal.js
+│   │   └── charts/
+│   │       ├── AvgSalaryChart.js
+│   │       └── EmployeeDeptChart.js
+│   ├── context/
+│   │   └── AuthContext.js
+│   ├── pages/
+│   │   ├── AdminManagement.js
+│   │   ├── Dashboard.js
+│   │   ├── Departments.js
+│   │   ├── EmployeeDetail.js
+│   │   ├── EmployeeList.js
+│   │   ├── Login.js
+│   │   ├── PayrollManagement.js
+│   │   ├── Positions.js
+│   │   ├── Reports.js
+│   │   └── UserManagement.js
+│   ├── services/
+│   │   ├── api.js
+│   │   └── authService.js
+│   ├── App.js
+│   └── index.js
+├── .env
+├── package-lock.json
+└── package.json
+```
+//////////
 # backend/api/v1/endpoints/departments.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
