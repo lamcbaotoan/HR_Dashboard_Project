@@ -1,5 +1,5 @@
 Database name:payroll, name: HUMAN_2025
-Đổi cho mật khẩu mysql trong core/config.py
+Đổi cho mật khẩu mysql trong .env
 
 cd frontend
 npm install                                                                     
