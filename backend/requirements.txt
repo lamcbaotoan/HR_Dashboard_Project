@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic[email]
+python-dotenv
+pyodbc
+mysql-connector-python
+python-jose[cryptography]
+apscheduler

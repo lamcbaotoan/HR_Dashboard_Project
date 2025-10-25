@@ -1,0 +1,17 @@
+# Frontend Dependencies
+frontend/node_modules/
+
+# Environment variables
+#.env
+#backend/.env
+
+# Python bytecode
+__pycache__/
+#*.py[cod]
+
+# SQLite Database (optional, depends if you want to commit it)
+# *.db
+
+# Build artifacts (if any)
+# build/
+# dist/
