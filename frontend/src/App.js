@@ -1,26 +1,27 @@
-// --- frontend/src/App.js ---
-
+// frontend/src/App.js
 import React from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
-import { AnimatePresence } from 'framer-motion';
+import { Routes, Route } from 'react-router-dom';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
-// Import các components
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
-
-// Import các trang (Pages)
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import EmployeeList from './pages/EmployeeList';
 import EmployeeDetail from './pages/EmployeeDetail';
-import AdminManagement from './pages/AdminManagement'; // For Quản lý Tổ chức
-import PayrollManagement from './pages/PayrollManagement'; // For Quản lý Bảng lương
-import Reports from './pages/Reports'; // For Báo cáo
-import UserManagement from './pages/UserManagement'; // For Quản lý Tài khoản
+import AdminManagement from './pages/AdminManagement'; // Quản lý tổ chức
+import PayrollManagement from './pages/PayrollManagement';
+import Reports from './pages/Reports';
+import UserManagement from './pages/UserManagement';
 
-// Các vai trò
+// --- IMPORT MỚI ---
+import ShareholderManagement from './pages/ShareholderManagement';
+import SystemAdmin from './pages/SystemAdmin';
+import LeaveApproval from './pages/LeaveApproval';
+import MyAttendance from './pages/MyAttendance';
+import MyPayslips from './pages/MyPayslips';
+
 const ROLES = {
     ADMIN: 'Admin',
     HR: 'HR Manager',
@@ -29,75 +30,33 @@ const ROLES = {
 };
 
 function App() {
-    const location = useLocation();
-
     return (
         <>
-            {/* Configure Toast Notifications */}
-            <ToastContainer
-                position="top-right"
-                autoClose={3000}
-                hideProgressBar={false}
-                newestOnTop={false}
-                closeOnClick
-                rtl={false}
-                pauseOnFocusLoss
-                draggable
-                pauseOnHover
-                theme="colored"
-            />
+            <ToastContainer theme="colored" />
+            <Routes>
+                <Route path="/login" element={<Login />} />
+                <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+                    <Route index element={<Dashboard />} />
+                    
+                    {/* Các route cũ */}
+                    <Route path="employees" element={<ProtectedRoute allowedRoles={[ROLES.ADMIN, ROLES.HR]}><EmployeeList /></ProtectedRoute>} />
+                    <Route path="employees/:id" element={<ProtectedRoute><EmployeeDetail /></ProtectedRoute>} />
+                    <Route path="management" element={<ProtectedRoute allowedRoles={[ROLES.ADMIN, ROLES.HR]}><AdminManagement /></ProtectedRoute>} />
+                    <Route path="payroll" element={<ProtectedRoute allowedRoles={[ROLES.ADMIN, ROLES.PAYROLL]}><PayrollManagement /></ProtectedRoute>} />
+                    <Route path="reports" element={<ProtectedRoute allowedRoles={[ROLES.HR, ROLES.PAYROLL]}><Reports /></ProtectedRoute>} />
+                    <Route path="user-management" element={<ProtectedRoute allowedRoles={[ROLES.ADMIN]}><UserManagement /></ProtectedRoute>} />
 
-            {/* AnimatePresence and Routes */}
-            <AnimatePresence mode="wait">
-                <Routes location={location} key={location.pathname}>
-                    <Route path="/login" element={<Login />} />
-                    <Route
-                        path="/"
-                        element={<ProtectedRoute><Layout /></ProtectedRoute>}
-                    >
-                        {/* 1. Dashboard */}
-                        <Route index element={<Dashboard />} />
-
-                        {/* 2. Quản lý Tài khoản (Moved Up) */}
-                        <Route
-                            path="user-management"
-                            element={<ProtectedRoute allowedRoles={[ROLES.ADMIN]}><UserManagement /></ProtectedRoute>}
-                        />
-
-                        {/* 3. Quản lý Nhân viên */}
-                        <Route
-                            path="employees"
-                            element={<ProtectedRoute allowedRoles={[ROLES.ADMIN, ROLES.HR]}><EmployeeList /></ProtectedRoute>}
-                        />
-                        {/* Keep Employee Detail route close to the list */}
-                        <Route
-                            path="employees/:id"
-                            element={<ProtectedRoute allowedRoles={[ROLES.ADMIN, ROLES.HR, ROLES.EMPLOYEE]}><EmployeeDetail /></ProtectedRoute>}
-                        />
-
-                        {/* 4. Quản lý Tổ chức */}
-                        <Route
-                            path="management" // Assuming this is for AdminManagement (Departments/Positions)
-                            element={<ProtectedRoute allowedRoles={[ROLES.ADMIN, ROLES.HR]}><AdminManagement /></ProtectedRoute>}
-                        />
-
-                        {/* 5. Quản lý Bảng lương */}
-                        <Route
-                            path="payroll"
-                            element={<ProtectedRoute allowedRoles={[ROLES.ADMIN, ROLES.PAYROLL]}><PayrollManagement /></ProtectedRoute>}
-                        />
-
-                        {/* 6. Báo cáo */}
-                        <Route
-                            path="reports"
-                            element={<ProtectedRoute allowedRoles={[ROLES.ADMIN, ROLES.HR, ROLES.PAYROLL]}><Reports /></ProtectedRoute>}
-                        />
-
-                    </Route>
-                    {/* Fallback 404 Route */}
-                    <Route path="*" element={<h2>404 Not Found</h2>} />
-                </Routes>
-            </AnimatePresence>
+                    {/* --- ROUTE MỚI --- */}
+                    <Route path="shareholders" element={<ProtectedRoute allowedRoles={[ROLES.ADMIN, ROLES.HR, ROLES.PAYROLL]}><ShareholderManagement /></ProtectedRoute>} />
+                    <Route path="system-admin" element={<ProtectedRoute allowedRoles={[ROLES.ADMIN]}><SystemAdmin /></ProtectedRoute>} />
+                    <Route path="leave-approval" element={<ProtectedRoute allowedRoles={[ROLES.HR]}><LeaveApproval /></ProtectedRoute>} />
+                    
+                    {/* Employee Portal */}
+                    <Route path="my-attendance" element={<ProtectedRoute allowedRoles={[ROLES.EMPLOYEE]}><MyAttendance /></ProtectedRoute>} />
+                    <Route path="my-payslips" element={<ProtectedRoute allowedRoles={[ROLES.EMPLOYEE]}><MyPayslips /></ProtectedRoute>} />
+                </Route>
+                <Route path="*" element={<h2>404 Not Found</h2>} />
+            </Routes>
         </>
     );
 }

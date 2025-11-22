@@ -1,26 +1,48 @@
+// frontend/src/components/charts/EmployeeDeptChart.js
 import React from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
-// Biểu đồ phân phối nhân viên theo phòng ban
-const EmployeeDeptChart = ({ data }) => {
-  // Chuyển đổi { "Phòng A": 10, "Phòng B": 20 }
-  // thành [ { name: "Phòng A", count: 10 }, { name: "Phòng B", count: 20 } ]
-  const chartData = Object.keys(data).map(key => ({
+const EmployeeDeptChart = ({ data, barColor, textColor }) => {
+  const chartData = Array.isArray(data) ? data : Object.keys(data).map(key => ({
     name: key,
-    'Số lượng': data[key],
+    value: data[key]
   }));
 
   return (
     <div style={{ height: 300 }}>
-      <h4>Phân phối Nhân viên theo Phòng ban</h4>
+      <h4 style={{textAlign:'center', color: textColor || '#888', marginBottom:'15px'}}>
+        Phân phối Nhân viên
+      </h4>
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={chartData}>
-          <XAxis dataKey="name" />
-          <YAxis />
-          <Tooltip />
+        <LineChart
+          data={chartData}
+          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" stroke="#444" vertical={false} />
+          <XAxis 
+            dataKey="name" 
+            stroke={textColor || "#ccc"}
+            tick={{fontSize: 12}}
+            angle={-45}
+            textAnchor="end"
+            height={60} 
+          />
+          <YAxis stroke={textColor || "#ccc"} allowDecimals={false} />
+          <Tooltip 
+            contentStyle={{backgroundColor: '#333', border: '1px solid #555', color: '#fff'}}
+            labelStyle={{color: '#ccc'}}
+          />
           <Legend />
-          <Bar dataKey="Số lượng" fill="#8884d8" />
-        </BarChart>
+          <Line 
+            type="monotone" 
+            dataKey="value" 
+            name="Số lượng"
+            stroke={barColor || "#82ca9d"} 
+            strokeWidth={3}
+            activeDot={{ r: 8 }} 
+            dot={{r: 4}}
+          />
+        </LineChart>
       </ResponsiveContainer>
     </div>
   );

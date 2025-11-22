@@ -4,9 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 import atexit
-# --- THÊM IMPORT NÀY ---
 from sqlalchemy.orm import joinedload 
-# --- KẾT THÚC THÊM ---
 
 from api.v1.api import api_router
 from database import SessionLocalSQLServer, SessionLocalMySQL, SessionLocalAuth, engine_auth, BaseAuth
@@ -18,15 +16,15 @@ from services.alert_service import (
 )
 # Sửa import: Lấy EmployeeHR trực tiếp từ models
 from models import User as AuthUser, EmployeeHR
-from crud import crud_user 
+# [CẬP NHẬT] Thêm crud_shareholder vào import
+from crud import crud_user, crud_shareholder
 import schemas 
 from core.security import get_password_hash 
 from auth.auth import get_user_role as get_role_from_hr
-
+from database import engine_mysql, BaseMySQL
 
 def run_alert_jobs():
     """Các hàm chạy dịch vụ cảnh báo (chạy hàng ngày)"""
-    
     print("Scheduler running daily jobs...")
     db_hr = SessionLocalSQLServer()
     db_payroll = SessionLocalMySQL()
@@ -43,7 +41,6 @@ def run_alert_jobs():
 
 def run_monthly_email_job():
     """Hàm wrapper để chạy job gửi email lương hàng tháng"""
- 
     print("Scheduler running monthly email job...")
     db_hr = SessionLocalSQLServer()
     db_payroll = SessionLocalMySQL()
@@ -59,17 +56,17 @@ def run_monthly_email_job():
 def initial_sync_and_setup():
     """
     Hàm này chạy một lần khi server khởi động:
-    1. Tạo CSDL auth nếu chưa có.
+    1. Tạo CSDL auth nếu chưa có (bao gồm cả bảng shareholders, leave_requests).
     2. Tạo/Kiểm tra tài khoản ADMIN mặc định.
-    3. Tạo/Kiểm tra tài khoản ADMIN mặc định.
-    4. Đồng bộ nhân viên từ HR_DB sang Auth_DB.
+    3. Đồng bộ nhân viên từ HR_DB sang Auth_DB.
+    4. [MỚI] Đồng bộ danh sách Cổ đông từ HR sang Auth DB.
     """
     print("--- BẮT ĐẦU KHỞI TẠO VÀ ĐỒNG BỘ ---")
     db_auth = SessionLocalAuth()
     db_hr = SessionLocalSQLServer()
     try:
-        # 1. Tạo bảng trong CSDL Auth
-        print("1. Đang kiểm tra và tạo bảng 'users' trong dashboard_auth.db...")
+        # 1. Tạo bảng trong CSDL Auth (Users, Shareholders, LeaveRequests...)
+        print("1. Đang kiểm tra và tạo bảng trong dashboard_auth.db...")
         BaseAuth.metadata.create_all(bind=engine_auth)
 
         # 2. Tạo/Kiểm tra tài khoản DEV (BỎ QUA)
@@ -93,11 +90,11 @@ def initial_sync_and_setup():
             print("   -> Tài khoản ADMIN đã tồn tại.")
         # --- KẾT THÚC ---
 
-        # 4. Đồng bộ nhân viên từ HR sang Auth
-        print("4. Bắt đầu đồng bộ nhân viên từ HUMAN_2025 sang Auth DB...")
+        # 4. Đồng bộ nhân viên từ HR sang Auth (User Accounts)
+        print("4. Bắt đầu đồng bộ tài khoản nhân viên từ HUMAN_2025 sang Auth DB...")
         hr_employees_query = db_hr.query(EmployeeHR).options(
              joinedload(EmployeeHR.department), # Eager load 
-             joinedload(EmployeeHR.position)   # Eager load 
+             joinedload(EmployeeHR.position)    # Eager load 
         )
         try:
              hr_employees = list(hr_employees_query.all()) 
@@ -127,8 +124,14 @@ def initial_sync_and_setup():
                 except Exception as e_sync:
                     print(f"   -> LỖI đồng bộ user {emp.Email}: {e_sync}")
 
+        print(f"   -> Đồng bộ tài khoản hoàn tất. Đã thêm {synced_count} nhân viên mới vào Auth DB.")
 
-        print(f"   -> Đồng bộ hoàn tất. Đã thêm {synced_count} nhân viên mới vào Auth DB.")
+        # 5. [MỚI] Đồng bộ danh sách Cổ đông (Shareholders)
+        print("5. Đang đồng bộ danh sách Cổ đông từ Nhân sự...")
+        try:
+            crud_shareholder.sync_all_employees_to_shareholders(db_auth, db_hr)
+        except Exception as e_sh:
+            print(f"!!! LỖI khi đồng bộ Cổ đông: {e_sh}")
 
     except Exception as e:
         print(f"!!! LỖI TRONG QUÁ TRÌNH KHỞI TẠO CHUNG: {e}")

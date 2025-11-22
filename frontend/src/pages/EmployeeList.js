@@ -6,16 +6,16 @@ import AddEmployeeModal from '../components/AddEmployeeModal';
 import EditEmployeeModal from '../components/EditEmployeeModal';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-toastify';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 
-const STATUS_OPTIONS = ["Đang làm việc", "Nghỉ phép", "Thử việc", "Thực tập"];
+const STATUS_OPTIONS = ["Đang làm việc", "Nghỉ phép", "Thử việc", "Thực tập", "Đã nghỉ việc"];
 
 // --- Skeleton Row Component ---
 const SkeletonRow = ({ columns }) => (
     <tr>
         {Array.from({ length: columns }).map((_, index) => (
             <td key={index} style={styles.tableCell}>
-                <div style={styles.skeletonCell} className="skeletonCell"></div>
+                <div style={styles.skeletonCell}></div>
             </td>
         ))}
     </tr>
@@ -26,17 +26,22 @@ function EmployeeList() {
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
     const { user: currentUser } = useAuth();
+    
+    // Filter States
     const [searchTerm, setSearchTerm] = useState('');
     const [filters, setFilters] = useState({ departmentId: '', positionId: '', status: '' });
     const [departments, setDepartments] = useState([]);
     const [positions, setPositions] = useState([]);
+    
+    // Modal States
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [employeeToEdit, setEmployeeToEdit] = useState(null);
+
     const isAdmin = currentUser?.role === 'Admin';
     const isHrManager = currentUser?.role === 'HR Manager';
 
-    // --- fetchEmployees ---
+    // --- FETCH DATA ---
     const fetchEmployees = useCallback(async (currentSearchTerm = searchTerm, currentFilters = filters) => {
         setLoading(true);
         try {
@@ -54,14 +59,12 @@ function EmployeeList() {
         } finally {
             setLoading(false);
         }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []); 
+    }, []);
 
-    // --- useEffect to load initial data ---
+    // Load Initial Filter Data (Dept/Pos)
     useEffect(() => {
         const fetchFilterData = async () => {
              setLoading(true);
-             setEmployees([]);
             try {
                 const [deptRes, posRes] = await Promise.all([
                     api.get('/departments/'),
@@ -71,155 +74,173 @@ function EmployeeList() {
                 setPositions(posRes.data);
                 await fetchEmployees('', { departmentId: '', positionId: '', status: '' });
             } catch (err) {
-                console.error("Failed to load initial data", err);
-                toast.error("Không thể tải dữ liệu bộ lọc hoặc nhân viên.");
+                toast.error("Không thể tải dữ liệu bộ lọc.");
                 setLoading(false);
             }
         };
         fetchFilterData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // --- useEffect để fetch khi filter thay đổi (debounce) ---
+    // Debounce Search
     const debounceTimeout = useRef(null);
     useEffect(() => {
-        if (debounceTimeout.current) {
-            clearTimeout(debounceTimeout.current);
-        }
+        if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
         debounceTimeout.current = setTimeout(() => {
             fetchEmployees(searchTerm, filters);
         }, 500);
-
-        return () => {
-            if (debounceTimeout.current) {
-                clearTimeout(debounceTimeout.current);
-            }
-        };
+        return () => clearTimeout(debounceTimeout.current);
     }, [searchTerm, filters, fetchEmployees]);
 
-
-    // --- Filter Handlers ---
+    // --- HANDLERS ---
     const handleFilterChange = (e) => {
         const { name, value } = e.target;
         setFilters(prev => ({ ...prev, [name]: value }));
     };
-     const handleSearchChange = (e) => {
-         setSearchTerm(e.target.value);
-    };
+
     const handleClearFilters = () => {
         setSearchTerm('');
         setFilters({ departmentId: '', positionId: '', status: '' });
     };
 
-    // --- Modal Handlers ---
     const handleViewDetails = (id) => navigate(`/employees/${id}`);
-    const handleOpenAddModal = () => setIsAddModalOpen(true);
-    const handleCloseAddModal = () => setIsAddModalOpen(false);
-    const handleAddSuccess = () => { handleCloseAddModal(); toast.success("Thêm nhân viên thành công!"); fetchEmployees(searchTerm, filters); };
-    const handleOpenEditModal = (employee) => { setEmployeeToEdit(employee); setIsEditModalOpen(true); };
-    const handleCloseEditModal = () => { setEmployeeToEdit(null); setIsEditModalOpen(false); };
-    const handleUpdateSuccess = () => { handleCloseEditModal(); toast.success("Cập nhật thông tin thành công!"); fetchEmployees(searchTerm, filters); };
+
+    // --- ADD EMPLOYEE ---
+    const handleAddSuccess = () => { 
+        setIsAddModalOpen(false);
+        toast.success("Thêm nhân viên thành công! (Đã ghi Nhật ký hoạt động)"); 
+        fetchEmployees(searchTerm, filters); 
+    };
+
+    // --- EDIT EMPLOYEE ---
+    const handleEditSuccess = () => { 
+        setIsEditModalOpen(false); setEmployeeToEdit(null);
+        toast.success("Cập nhật hồ sơ thành công! (Đã ghi Nhật ký hoạt động)"); 
+        fetchEmployees(searchTerm, filters); 
+    };
+
+    // --- DELETE EMPLOYEE (Với ràng buộc dữ liệu) ---
     const handleDeleteEmployee = async (employeeId, employeeName) => {
-        if (window.confirm(`Xóa "${employeeName}" (ID: ${employeeId})? Hành động này cũng xóa tài khoản liên kết (nếu có).`)) {
-            const toastId = toast.loading("Đang xóa nhân viên...");
+        if (window.confirm(`Xác nhận xóa nhân viên "${employeeName}" (ID: ${employeeId})?\n\nHệ thống sẽ kiểm tra ràng buộc dữ liệu (Lương, Cổ tức) trước khi xóa.`)) {
+            const toastId = toast.loading("Đang kiểm tra ràng buộc và xóa...");
             try {
                 await api.delete(`/employees/${employeeId}`);
-                toast.update(toastId, { render: "Xóa nhân viên thành công!", type: "success", isLoading: false, autoClose: 2000 });
+                toast.update(toastId, { render: "Đã xóa và ghi log thành công!", type: "success", isLoading: false, autoClose: 2000 });
                 fetchEmployees(searchTerm, filters);
             } catch (err) {
-                console.error('Failed to delete employee', err);
-                const errorMsg = err.response?.data?.detail || `Xóa nhân viên "${employeeName}" thất bại.`;
-                toast.update(toastId, { render: errorMsg, type: "error", isLoading: false, autoClose: 3000 });
+                console.error('Delete failed', err);
+                // Hiển thị lỗi chi tiết từ Backend (VD: Không thể xóa vì có cổ tức)
+                const errorMsg = err.response?.data?.detail || "Xóa thất bại.";
+                toast.update(toastId, { render: `LỖI: ${errorMsg}`, type: "error", isLoading: false, autoClose: 5000 });
             }
         }
     };
 
-    // --- Render Logic ---
+    // Helper để tô màu badge
+    const getRoleBadgeStyle = (role) => {
+        if (role === 'Admin') return { background: '#e6f4ff', color: '#0958d9', border: '1px solid #91caff' };
+        if (role === 'HR Manager') return { background: '#f6ffed', color: '#389e0d', border: '1px solid #b7eb8f' };
+        if (role === 'Payroll Manager') return { background: '#fff0f6', color: '#c41d7f', border: '1px solid #ffadd2' };
+        return { background: '#f5f5f5', color: '#595959', border: '1px solid #d9d9d9' };
+    };
+
     return (
-        // FIX: Sửa padding từ '0px' thành '20px'
-        <div style={{ padding: '20px', color: 'var(--text-color)' }}> 
-            <h2 style={{ color: 'var(--text-color)' }}>Quản lý Nhân viên</h2>
+        <motion.div 
+            initial={{ opacity: 0, y: 20 }} 
+            animate={{ opacity: 1, y: 0 }}
+            style={{ padding: '20px', color: 'var(--text-color)' }}
+        >
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'20px'}}>
+                <h2 style={{ margin: 0 }}>Quản lý Hồ sơ Nhân viên</h2>
+                {(isAdmin || isHrManager) && (
+                    <button onClick={() => setIsAddModalOpen(true)} style={styles.addButton} disabled={loading}>
+                        + Thêm Nhân viên
+                    </button>
+                )}
+            </div>
             
+            {/* --- FILTER SECTION --- */}
             <div style={styles.filterForm}>
                  <div style={styles.filterGrid}>
                      <div style={styles.filterItem}>
-                         <label style={styles.filterLabel}>Tìm kiếm chung</label>
-                         <input type="text" placeholder="ID, tên..." value={searchTerm} onChange={handleSearchChange} style={styles.filterInput} className="filter-input" />
+                         <label style={styles.filterLabel}>Tìm kiếm (ID, Tên)</label>
+                         <input type="text" placeholder="Nhập từ khóa..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} style={styles.filterInput} />
                      </div>
                      <div style={styles.filterItem}>
                          <label style={styles.filterLabel}>Phòng ban</label>
-                         <select name="departmentId" value={filters.departmentId} onChange={handleFilterChange} style={styles.filterSelect} className="filter-select">
-                             <option value="">Tất cả phòng ban</option>
+                         <select name="departmentId" value={filters.departmentId} onChange={handleFilterChange} style={styles.filterSelect}>
+                             <option value="">Tất cả</option>
                              {departments.map(d => <option key={d.DepartmentID} value={d.DepartmentID}>{d.DepartmentName}</option>)}
                          </select>
                      </div>
                      <div style={styles.filterItem}>
                          <label style={styles.filterLabel}>Chức vụ</label>
-                         <select name="positionId" value={filters.positionId} onChange={handleFilterChange} style={styles.filterSelect} className="filter-select">
-                             <option value="">Tất cả chức vụ</option>
+                         <select name="positionId" value={filters.positionId} onChange={handleFilterChange} style={styles.filterSelect}>
+                             <option value="">Tất cả</option>
                              {positions.map(p => <option key={p.PositionID} value={p.PositionID}>{p.PositionName}</option>)}
                          </select>
                      </div>
                      <div style={styles.filterItem}>
                          <label style={styles.filterLabel}>Trạng thái</label>
-                         <select name="status" value={filters.status} onChange={handleFilterChange} style={styles.filterSelect} className="filter-select">
-                             <option value="">Tất cả trạng thái</option>
+                         <select name="status" value={filters.status} onChange={handleFilterChange} style={styles.filterSelect}>
+                             <option value="">Tất cả</option>
                              {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                          </select>
                      </div>
                      <div style={{ ...styles.filterItem, alignSelf: 'flex-end' }}>
-                         <button type="button" onClick={handleClearFilters} disabled={loading} style={{ ...styles.filterButtonClear }} className="filterButtonClear">
-                             Xóa bộ lọc
-                         </button>
+                         <button type="button" onClick={handleClearFilters} style={styles.filterButtonClear}>Xóa bộ lọc</button>
                      </div>
                  </div>
             </div>
 
-            {(isAdmin || isHrManager) && (
-                <button onClick={handleOpenAddModal} style={styles.addButton} disabled={loading}>
-                    Thêm Nhân viên mới
-                </button>
-            )}
-
+            {/* --- TABLE SECTION --- */}
             <div style={styles.tableContainer}>
-                <table style={styles.table}>
+                 <table style={styles.table}>
                     <thead>
                         <tr>
-                            <th>ID (HR)</th>
-                            <th>Họ tên</th>
-                            <th>Email</th>
-                            <th>Phòng ban</th>
-                            <th>Chức vụ</th>
-                            <th>Trạng thái</th>
-                            <th>Vai trò (Auth)</th>
-                            <th style={{minWidth: isAdmin ? '160px' : '100px'}}>Hành động</th>
+                            <th style={styles.th}>Mã NV</th>
+                            <th style={styles.th}>Họ và Tên</th>
+                            <th style={styles.th}>Phòng ban / Chức vụ</th>
+                            <th style={styles.th}>Vai trò (Auth)</th>
+                            <th style={styles.th}>Trạng thái</th>
+                            <th style={{...styles.th, textAlign:'center'}}>Hành động</th>
                         </tr>
                     </thead>
                     <tbody>
                         {loading ? (
-                            Array.from({ length: 8 }).map((_, index) => <SkeletonRow key={index} columns={8} />)
+                            Array.from({ length: 8 }).map((_, index) => <SkeletonRow key={index} columns={6} />)
                         ) : employees.length > 0 ? (
                             employees.map(emp => (
-                                <tr key={emp.EmployeeID}>
-                                    <td style={styles.tableCell}>{emp.EmployeeID}</td>
-                                    <td style={styles.tableCell}>{emp.FullName}</td>
-                                    <td style={styles.tableCell}>{emp.Email}</td>
-                                    <td style={styles.tableCell}>{emp.department?.DepartmentName || 'N/A'}</td>
-                                    <td style={styles.tableCell}>{emp.position?.PositionName || 'N/A'}</td>
-                                    <td style={styles.tableCell}>{emp.Status}</td>
-                                    <td style={styles.tableCell}>{emp.role || '-'}</td>
+                                <tr key={emp.EmployeeID} style={styles.tr}>
+                                    <td style={styles.tableCell}><strong>{emp.EmployeeID}</strong></td>
+                                    <td style={styles.tableCell}>
+                                        <div>{emp.FullName}</div>
+                                        <div style={{fontSize:'0.85em', color:'var(--text-color-secondary)'}}>{emp.Email}</div>
+                                    </td>
+                                    <td style={styles.tableCell}>
+                                        <div style={{fontWeight:'500'}}>{emp.department?.DepartmentName || '-'}</div>
+                                        <div style={{fontSize:'0.85em', color:'var(--text-color-secondary)'}}>{emp.position?.PositionName || '-'}</div>
+                                    </td>
+                                    <td style={styles.tableCell}>
+                                        <span style={{...styles.roleBadge, ...getRoleBadgeStyle(emp.role)}}>{emp.role || 'User'}</span>
+                                    </td>
+                                    <td style={styles.tableCell}>
+                                        <span style={emp.Status === 'Đang làm việc' ? styles.statusActive : styles.statusInactive}>
+                                            {emp.Status}
+                                        </span>
+                                    </td>
                                     <td style={styles.tableCellActions}>
-                                        <button onClick={() => handleViewDetails(emp.EmployeeID)} className="action-button view-button">Xem</button>
-                                        {(isAdmin || isHrManager) && ( <button onClick={() => handleOpenEditModal(emp)} className="action-button edit-button">Sửa</button> )}
+                                         <button onClick={() => handleViewDetails(emp.EmployeeID)} className="action-button view-button">Chi tiết</button>
+                                        {(isAdmin || isHrManager) && ( 
+                                            <button onClick={() => { setEmployeeToEdit(emp); setIsEditModalOpen(true); }} className="action-button edit-button">Sửa</button> 
+                                        )}
                                         {isAdmin && (
                                             <button onClick={() => handleDeleteEmployee(emp.EmployeeID, emp.FullName)} className="action-button delete-button">Xóa</button>
                                         )}
-                                        {isAdmin && !emp.auth_user_id && ( <span style={{...styles.annotation, color: 'orange'}}>(Chưa có TK)</span> )}
                                     </td>
                                 </tr>
                             ))
                         ) : (
-                            <tr><td colSpan="8" style={{ textAlign: 'center', padding: '20px', color: 'var(--text-color-secondary)' }}>Không tìm thấy nhân viên nào.</td></tr>
+                            <tr><td colSpan="6" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-color-secondary)' }}>Không tìm thấy nhân viên nào.</td></tr>
                         )}
                     </tbody>
                 </table>
@@ -227,111 +248,44 @@ function EmployeeList() {
 
             {/* Modals */}
             <AnimatePresence>
-                {isAddModalOpen && <AddEmployeeModal isOpen={isAddModalOpen} onClose={handleCloseAddModal} onSuccess={handleAddSuccess} />}
-                {isEditModalOpen && employeeToEdit && <EditEmployeeModal isOpen={isEditModalOpen} onClose={handleCloseEditModal} onSuccess={handleUpdateSuccess} employeeData={employeeToEdit} />}
+                {isAddModalOpen && <AddEmployeeModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onSuccess={handleAddSuccess} />}
+                {isEditModalOpen && employeeToEdit && <EditEmployeeModal isOpen={isEditModalOpen} onClose={() => {setIsEditModalOpen(false); setEmployeeToEdit(null)}} onSuccess={handleEditSuccess} employeeData={employeeToEdit} />}
             </AnimatePresence>
-        </div>
+        </motion.div>
     );
 }
 
-// --- STYLES ĐÃ CẬP NHẬT ---
+// --- STYLES ---
 const styles = {
-    filterForm: { marginBottom: '20px', padding: '15px', border: '1px solid var(--border-color)', borderRadius: '5px', background: 'var(--card-bg)' }, // Dùng var
-    filterGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px' },
+    filterForm: { marginBottom: '20px', padding: '20px', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'var(--card-bg)', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' },
+    filterGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px' },
     filterItem: { display: 'flex', flexDirection: 'column' },
-    filterLabel: { marginBottom: '5px', fontSize: '0.85em', fontWeight: 'bold', color: 'var(--text-color-secondary)' }, // Dùng var
-    filterInput: { padding: '8px 10px', border: '1px solid var(--input-border-color)', borderRadius: '4px', width: '100%', boxSizing: 'border-box', backgroundColor: 'var(--input-bg)', color: 'var(--text-color)' }, // Dùng var
-    filterSelect: { padding: '8px 10px', border: '1px solid var(--input-border-color)', borderRadius: '4px', width: '100%', boxSizing: 'border-box', background: 'var(--input-bg)', color: 'var(--text-color)' }, // Dùng var
-    filterButtonClear: {
-        padding: '8px 15px', cursor: 'pointer', border: '1px solid var(--border-color)',
-        backgroundColor: 'var(--button-bg)', color: 'var(--button-text)', // Dùng var
-        borderRadius: '4px', transition: 'background-color 0.2s', whiteSpace: 'nowrap'
-    },
-    addButton: { marginBottom: '15px', padding: '8px 15px', cursor: 'pointer', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px' }, // Giữ màu xanh
-    tableContainer: { 
-        overflowX: 'auto', marginTop: '15px', 
-        backgroundColor: 'var(--card-bg)', // Dùng var
-        border: '1px solid var(--table-border-color)', // Dùng var
-        borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-    },
-    table: {
-        width: '100%', borderCollapse: 'collapse', fontSize: '0.9em', minWidth: '900px',
-        // Bỏ border ở đây, để tableContainer xử lý
-    },
-    tableCell: { padding: '8px 10px', borderBottom: '1px solid var(--table-row-border-color)', borderRight: '1px solid var(--table-row-border-color)', verticalAlign: 'middle', whiteSpace: 'nowrap', color: 'var(--text-color)'}, // Dùng var
-    tableCellActions: { padding: '5px 8px', borderBottom: '1px solid var(--table-row-border-color)', borderRight: '1px solid var(--table-row-border-color)', whiteSpace: 'nowrap', textAlign: 'left', color: 'var(--text-color)' }, // Dùng var
+    filterLabel: { marginBottom: '8px', fontSize: '0.85em', fontWeight: '600', color: 'var(--text-color-secondary)' },
+    filterInput: { padding: '10px', border: '1px solid var(--input-border-color)', borderRadius: '6px', width: '100%', boxSizing: 'border-box', backgroundColor: 'var(--input-bg)', color: 'var(--text-color)' },
+    filterSelect: { padding: '10px', border: '1px solid var(--input-border-color)', borderRadius: '6px', width: '100%', boxSizing: 'border-box', background: 'var(--input-bg)', color: 'var(--text-color)' },
+    filterButtonClear: { padding: '10px 15px', cursor: 'pointer', border: '1px solid var(--border-color)', backgroundColor: 'transparent', color: 'var(--text-color)', borderRadius: '6px', transition: '0.2s', fontWeight: '500' },
+    addButton: { padding: '10px 20px', cursor: 'pointer', backgroundColor: '#0d6efd', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '600', boxShadow: '0 2px 4px rgba(13, 110, 253, 0.3)' },
+    
+    tableContainer: { overflowX: 'auto', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' },
+    table: { width: '100%', borderCollapse: 'collapse', fontSize: '0.95em' },
+    th: { padding: '15px', background: 'var(--table-header-bg)', color: 'var(--text-color)', textAlign: 'left', fontWeight: '600', borderBottom: '2px solid var(--border-color)' },
+    tr: { borderBottom: '1px solid var(--border-color)' },
+    tableCell: { padding: '15px', verticalAlign: 'middle', color: 'var(--text-color)' },
+    tableCellActions: { padding: '15px', textAlign: 'center', display:'flex', justifyContent:'center', gap:'8px' },
+    
+    roleBadge: { padding: '4px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: '600', display: 'inline-block' },
+    statusActive: { color: '#13c2c2', background: '#e6fffb', padding: '4px 8px', borderRadius: '4px', border: '1px solid #87e8de', fontSize: '0.85em' },
+    statusInactive: { color: '#faad14', background: '#fffbe6', padding: '4px 8px', borderRadius: '4px', border: '1px solid #ffe58f', fontSize: '0.85em' },
+    
     skeletonCell: { height: '20px', backgroundColor: '#e0e0e0', borderRadius: '4px', animation: 'pulse 1.5s infinite ease-in-out' },
-    annotation: { fontSize: '0.8em', color: 'var(--text-color-secondary)', marginLeft: '5px', display: 'inline-block' } // Dùng var
 };
 
-// --- CSS ĐỘNG ĐÃ CẬP NHẬT ---
-const customEmployeeListStyles = `
-    @keyframes pulse {
-        0% { background-color: #e0e0e0; }
-        50% { background-color: #f0f0f0; }
-        100% { background-color: #e0e0e0; }
-    }
-    /* Dark skeleton */
-    body.theme-dark .skeletonCell {
-        background-color: #333;
-        opacity: 0.5;
-        animation-name: pulse-dark;
-    }
-    @keyframes pulse-dark {
-        0%{background-color:#333;opacity:.5}
-        50%{background-color:#444;opacity:.7}
-        100%{background-color:#333;opacity:.5}
-    }
-
-    /* Action buttons */
-    .action-button {
-        padding: 3px 6px; margin-right: 4px; margin-bottom: 3px; border-radius: 3px;
-        border: 1px solid var(--border-color); background-color: var(--button-bg); color: var(--button-text); /* Dùng var */
-        cursor: pointer; font-size: 0.8em; transition: background-color 0.2s, border-color 0.2s; white-space: nowrap;
-    }
-    .action-button:hover {
-        border-color: #aaa;
-        background-color: var(--border-color) !important; /* Dùng var */
-    }
-
-    /* Giữ màu semantic */
-    .view-button:hover { background-color: #e6f7ff !important; border-color: #91d5ff !important; }
-    .edit-button:hover { background-color: #fffbe6 !important; border-color: #ffe58f !important; }
-    .delete-button { color: #ff4d4f; }
-    .delete-button:hover { background-color: #fff1f0 !important; border-color: #ffa39e !important; }
-
-    /* Focus styles */
-    .filter-input:focus, .filter-select:focus {
-         border-color: var(--primary-color); /* Dùng var */
-         box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
-         outline: none;
-    }
-    /* Clear button hover */
-    .filterButtonClear:hover {
-        background-color: var(--border-color) !important; /* Dùng var */
-    }
-
-    /* Table head */
-    thead th {
-        background-color: var(--table-header-bg); color: var(--text-color); /* Dùng var */
-        text-align: left; padding: 10px 12px;
-        border-bottom: 2px solid var(--table-border-color); border-right: 1px solid var(--table-border-color); /* Dùng var */
-    }
-    thead th:last-child, tbody tr td:last-child {
-        border-right: none;
-    }
-`;
-
-(function() {
-    const styleId = 'employee-list-styles';
-    if (document.getElementById(styleId)) {
-        document.getElementById(styleId).remove(); // Xóa style cũ nếu có
-    }
-    const styleSheet = document.createElement("style");
-    styleSheet.id = styleId;
-    styleSheet.type = "text/css";
-    styleSheet.innerText = customEmployeeListStyles;
-    document.head.appendChild(styleSheet);
-})();
+// Add Pulse Animation
+if (!document.getElementById('pulse-style')) {
+    const style = document.createElement('style');
+    style.id = 'pulse-style';
+    style.innerHTML = `@keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }`;
+    document.head.appendChild(style);
+}
 
 export default EmployeeList;

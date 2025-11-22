@@ -3,195 +3,214 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import EmployeeDeptChart from '../components/charts/EmployeeDeptChart';
-import AvgSalaryChart from '../components/charts/AvgSalaryChart';
 import { motion } from 'framer-motion';
 import { toast } from 'react-toastify';
 
-// --- Skeleton Components (Đã đổi tên) ---
-const SkeletonStatCard = () => (
-    <div style={styles.skeletonCard} >
-        <div style={styles.skeletonTextLarge} className="skeleton-text-large"></div>
-        <div style={styles.skeletonTextSmall} className="skeleton-text-small"></div>
-    </div>
-);
-const SkeletonChartCard = () => (
-    <div style={styles.skeletonChart} className="skeleton-chart"></div>
-);
+// Charts
+import EmployeeDeptChart from '../components/charts/EmployeeDeptChart';
+import AvgSalaryChart from '../components/charts/AvgSalaryChart';
+import StatusChart from '../components/charts/StatusChart';
+import SalaryTrendChart from '../components/charts/SalaryTrendChart';
+
+// --- Icons ---
+const UserIcon = () => <span>👥</span>;
+const MoneyIcon = () => <span>💰</span>;
+const DividendIcon = () => <span>💎</span>;
+const AlertIcon = () => <span>🔔</span>;
+
+// Skeleton Loading
+const SkeletonCard = () => <div style={{background:'#e0e0e0', height:'120px', borderRadius:'8px', animation:'pulse 1.5s infinite'}}></div>;
+const SkeletonChart = () => <div style={{background:'#e0e0e0', height:'350px', borderRadius:'8px', animation:'pulse 1.5s infinite'}}></div>;
 
 function Dashboard() {
     const { user } = useAuth();
-    const [stats, setStats] = useState({ totalEmployees: null, totalSalaryBudget: null, unreadAlerts: null });
-    const [chartData, setChartData] = useState({ distributionByDept: {}, avgSalaryByDept: {} });
+    const [data, setData] = useState(null);
+    const [alerts, setAlerts] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
     const isDarkMode = document.body.classList.contains('theme-dark');
 
     useEffect(() => {
-        // Add custom styles
-        const styleId = 'dashboard-styles';
-        if (!document.getElementById(styleId)) {
-            const styleSheet = document.createElement("style");
-            styleSheet.id = styleId;
-            styleSheet.type = "text/css";
-            styleSheet.innerText = `
-                .stat-card:hover {
-                    transform: translateY(-5px);
-                    box-shadow: 0 8px 15px rgba(0,0,0,0.1) !important;
-                }
-                @keyframes pulse {
-                    0% { background-color: #e0e0e0; opacity: 0.6; }
-                    50% { background-color: #f0f0f0; opacity: 0.8; }
-                    100% { background-color: #e0e0e0; opacity: 0.6; }
-                }
-                body.theme-dark .skeleton-text-large,
-                body.theme-dark .skeleton-text-small,
-                body.theme-dark .skeleton-chart {
-                    background-color: #333;
-                    opacity: 0.5;
-                    animation-name: pulse-dark;
-                }
-                 @keyframes pulse-dark {
-                    0% { background-color: #333; opacity: 0.5; }
-                    50% { background-color: #444; opacity: 0.7; }
-                    100% { background-color: #333; opacity: 0.5; }
-                }
-            `;
-            document.head.appendChild(styleSheet);
-        }
-
         const fetchDashboardData = async () => {
             setLoading(true);
-            setError('');
             try {
-                // Fetch all data concurrently
-                const [hrRes, payrollRes, unreadCountRes] = await Promise.all([
-                    api.get('/reports/hr_summary'),
-                    api.get('/reports/payroll_summary'),
-                    api.get('/notifications/unread-count') // Fetch unread notifications count
-                ]);
-
-                setStats({
-                    totalEmployees: hrRes.data.total_employees,
-                    totalSalaryBudget: payrollRes.data.total_salary_budget,
-                    unreadAlerts: unreadCountRes.data,
-                });
-
-                setChartData({
-                    distributionByDept: hrRes.data.distribution_by_dept,
-                    avgSalaryByDept: payrollRes.data.avg_salary_by_dept,
-                });
-
+                const summaryRes = await api.get('/reports/dashboard-summary');
+                setData(summaryRes.data);
+                
+                const alertRes = await api.get('/notifications/', { params: { limit: 5 } });
+                setAlerts(alertRes.data);
             } catch (err) {
-                console.error("Failed to fetch dashboard data", err);
-                setError('Không thể tải dữ liệu dashboard.');
-                // Chỉ toast lỗi chính, bỏ qua lỗi unread-count nếu có
-                if (!err.config?.url?.includes('unread-count')) {
-                     toast.error('Không thể tải dữ liệu dashboard.');
-                }
-                // Giả lập dữ liệu 0 cho card thông báo nếu API lỗi
-                setStats(prev => ({...prev, unreadAlerts: 0}));
+                console.error("Dashboard Error:", err);
             } finally {
                 setLoading(false);
             }
         };
-
         fetchDashboardData();
     }, []);
 
     const barColor1 = isDarkMode ? '#6A7FAB' : '#8884d8';
     const barColor2 = isDarkMode ? '#77BFA3' : '#82ca9d';
-    const textColor = isDarkMode ? 'var(--text-color-secondary)' : '#666';
+    const textColor = isDarkMode ? '#a0a0a0' : '#666';
 
-    const formatCurrency = (value) => {
-        if (typeof value !== 'number') return 'N/A'; // Xử lý null/undefined
-        return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
-    };
+    const fmtMoney = (val) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
+
+    if (loading) {
+        return (
+            <div style={{padding:'20px'}}>
+                <div style={{marginBottom:'20px'}}><SkeletonCard /></div>
+                <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'20px'}}>
+                    <SkeletonCard /><SkeletonCard /><SkeletonCard />
+                </div>
+                 <div style={{marginTop:'20px', display:'grid', gridTemplateColumns:'1fr 1fr', gap:'20px'}}>
+                    <SkeletonChart /><SkeletonChart />
+                </div>
+            </div>
+        );
+    }
+
+    if (!data) return <div style={{padding:'20px', textAlign:'center'}}>Không có dữ liệu.</div>;
+
+    // Destructure an toàn
+    const { 
+        hr_metrics = {}, 
+        payroll_metrics = {}, 
+        financial_metrics = {} 
+    } = data || {};
+
+    // [FIX] Đảm bảo dữ liệu luôn là mảng (Array) và KHÔNG dùng .reduce() khi truyền vào chart
+    const deptData = hr_metrics?.department_distribution || [];
+    const salaryData = payroll_metrics?.avg_salary_by_dept || [];
+    const statusData = hr_metrics?.status_distribution || [];
+    const trendData = payroll_metrics?.salary_trend || [];
 
     return (
-        <div style={styles.dashboardContainer}>
+        <motion.div 
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} 
+            style={{ padding: '20px', color: 'var(--text-color)' }}
+        >
             <div style={styles.welcomeMessage}>
-                {/* Dùng CSS Vars */}
-                <h2 style={{ color: 'var(--text-color)' }}>Chào mừng quay trở lại, {user?.email}!</h2>
-                <p style={{ color: 'var(--text-color-secondary)' }}>Tổng quan hệ thống nhân sự và lương.</p>
+                 <h2 style={{ color: 'var(--text-color)', margin: 0 }}>Chào mừng quay trở lại, {user?.email}!</h2>
+                 <p style={{ color: 'var(--text-color-secondary)', marginTop: '5px' }}>Tổng quan hệ thống nhân sự và lương.</p>
             </div>
 
-            {error && <p style={{ color: 'red' }}>{error}</p>}
+            {/* 1. KEY METRICS CARDS */}
+            <div style={styles.gridCards}>
+                <Link to="/employees" style={{ textDecoration: 'none' }}>
+                    <div style={styles.card}>
+                        <div style={styles.cardIcon}><UserIcon /></div>
+                        <div>
+                            <div style={styles.cardTitle}>Tổng Nhân sự</div>
+                            <div style={styles.cardValue}>{hr_metrics?.total_employees || 0}</div>
+                            <div style={styles.cardSub}>{hr_metrics?.shareholder_count || 0} là Cổ đông</div>
+                        </div>
+                    </div>
+                </Link>
 
-            <div style={styles.statsGrid}>
-                {loading ? (
-                    <> <SkeletonStatCard /> <SkeletonStatCard /> <SkeletonStatCard /> </>
-                ) : (
-                    <>
-                        <Link to="/employees" style={{ textDecoration: 'none' }}>
-                            <motion.div style={styles.statCard} className="stat-card" whileHover={{ y: -5 }}>
-                                <div style={styles.statValue}>{stats.totalEmployees ?? 'N/A'}</div>
-                                <div style={styles.statLabel}>Tổng số nhân viên</div>
-                            </motion.div>
-                        </Link>
-                        <Link to="/payroll" style={{ textDecoration: 'none' }}>
-                            <motion.div style={styles.statCard} className="stat-card" whileHover={{ y: -5 }}>
-                                <div style={styles.statValue}> {formatCurrency(stats.totalSalaryBudget)} </div>
-                                <div style={styles.statLabel}>Tổng lương tháng</div>
-                            </motion.div>
-                        </Link>
-                        <Link to="/" style={{ textDecoration: 'none' }}>
-                             <motion.div
-                                style={stats.unreadAlerts > 0 ? {...styles.statCard, ...styles.statCardAlert} : styles.statCard}
-                                className="stat-card"
-                                whileHover={{ y: -5 }}
-                             >
-                                <div style={styles.statValue}>{stats.unreadAlerts ?? 'N/A'}</div>
-                                <div style={styles.statLabel}>Cảnh báo/Thông báo mới</div>
-                            </motion.div>
-                        </Link>
-                    </>
+                <Link to="/payroll" style={{ textDecoration: 'none' }}>
+                    <div style={styles.card}>
+                        <div style={{...styles.cardIcon, background:'#e6f7ff', color:'#1890ff'}}><MoneyIcon /></div>
+                        <div>
+                            <div style={styles.cardTitle}>Quỹ Lương (Tháng này)</div>
+                            <div style={styles.cardValue}>{fmtMoney(payroll_metrics?.total_salary_budget || 0)}</div>
+                            <div style={styles.cardSub}>Dữ liệu từ PAYROLL</div>
+                        </div>
+                    </div>
+                </Link>
+
+                <Link to="/shareholders" style={{ textDecoration: 'none' }}>
+                    <div style={styles.card}>
+                        <div style={{...styles.cardIcon, background:'#f9f0ff', color:'#722ed1'}}><DividendIcon /></div>
+                        <div>
+                            <div style={styles.cardTitle}>Tổng Cổ tức đã chi</div>
+                            <div style={styles.cardValue}>{fmtMoney(financial_metrics?.total_dividends || 0)}</div>
+                            <div style={styles.cardSub}>Dữ liệu từ HUMAN_2025</div>
+                        </div>
+                    </div>
+                </Link>
+            </div>
+
+            {/* 2. CHARTS & ANALYSIS */}
+            <div style={styles.gridCharts}>
+                {/* Biểu đồ Xu hướng lương (Full width) */}
+                {trendData.length > 0 && (
+                    <div style={{...styles.chartCard, gridColumn: '1 / -1'}}> 
+                        <SalaryTrendChart data={trendData} />
+                    </div>
                 )}
+
+                <div style={styles.chartCard}>
+                    {/* [FIX] Truyền trực tiếp mảng deptData */}
+                    <EmployeeDeptChart 
+                        data={deptData} 
+                        barColor={barColor1} 
+                        textColor={textColor}
+                    />
+                </div>
+
+                <div style={styles.chartCard}>
+                    {/* [FIX] Truyền trực tiếp mảng salaryData -> Sửa lỗi biểu đồ trắng */}
+                    <AvgSalaryChart 
+                        data={salaryData} 
+                        barColor={barColor2} 
+                        textColor={textColor}
+                    />
+                </div>
+
+                <div style={styles.chartCard}>
+                    <StatusChart data={statusData} />
+                </div>
             </div>
 
-            <div style={styles.chartsGrid}>
-                {loading ? (
-                    <> <SkeletonChartCard /> <SkeletonChartCard /> </>
-                ) : (
-                    <>
-                        <motion.div style={styles.chartContainer} whileHover={{ boxShadow: 'var(--hover-shadow)' }}>
-                            <EmployeeDeptChart data={chartData.distributionByDept} barColor={barColor1} textColor={textColor} />
-                        </motion.div>
-                        <motion.div style={styles.chartContainer} whileHover={{ boxShadow: 'var(--hover-shadow)' }}>
-                            <AvgSalaryChart data={chartData.avgSalaryByDept} barColor={barColor2} textColor={textColor} />
-                        </motion.div>
-                    </>
-                )}
+            {/* 3. ALERTS CENTER */}
+            <div style={{marginTop: '30px'}}>
+                <h3 style={{display:'flex', alignItems:'center', gap:'10px', color:'var(--text-color)'}}>
+                    <AlertIcon /> Trung tâm Cảnh báo & Sự kiện
+                </h3>
+                <div style={styles.alertContainer}>
+                    {alerts.length > 0 ? alerts.map(alert => (
+                        <div key={alert.id} style={styles.alertItem}>
+                            <div style={{fontWeight:'bold', color: getAlertColor(alert.type)}}>{getAlertTitle(alert.type)}</div>
+                            <div style={{color:'var(--text-color)'}}>{alert.message}</div>
+                            <div style={{fontSize:'0.8em', color:'var(--text-color-secondary)', marginTop:'5px'}}>
+                                {new Date(alert.created_at).toLocaleString()}
+                            </div>
+                        </div>
+                    )) : (
+                        <div style={{padding:'20px', textAlign:'center', color:'var(--text-color-secondary)'}}>Không có cảnh báo mới.</div>
+                    )}
+                </div>
             </div>
-        </div>
+        </motion.div>
     );
 }
 
-// --- STYLES ĐÃ CẬP NHẬT (Sử dụng CSS Vars) ---
+// Helpers
+const getAlertColor = (type) => {
+    if (type === 'leave_warning' || type === 'salary_alert') return '#ff4d4f';
+    if (type && type.includes('anniversary')) return '#faad14';
+    return '#1890ff';
+};
+
+const getAlertTitle = (type) => {
+    if (type === 'leave_warning') return '⚠️ Cảnh báo Nghỉ phép';
+    if (type === 'salary_alert') return '💰 Cảnh báo Lương';
+    if (type && type.includes('anniversary')) return '🎉 Sự kiện Nhân sự';
+    return 'Thông báo';
+};
+
 const styles = {
-    dashboardContainer: { padding: '20px' },
-    welcomeMessage: { marginBottom: '30px', paddingBottom: '15px', borderBottom: '1px solid var(--border-color)' },
-    statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px', marginBottom: '30px' },
-    statCard: {
-        backgroundColor: 'var(--card-bg)', padding: '20px', borderRadius: '8px',
-        boxShadow: '0 2px 5px rgba(0,0,0,0.05)', textAlign: 'center',
-        transition: 'transform 0.2s ease, box-shadow 0.2s ease', cursor: 'pointer',
-        borderLeft: '5px solid var(--primary-color)', // Dùng màu primary
-    },
-    statCardAlert: { borderLeft: '5px solid #ff4d4f' }, // Giữ màu đỏ cho Cảnh báo
-    statValue: { fontSize: '2.2rem', fontWeight: 'bold', color: 'var(--text-color)', margin: '10px 0' },
-    statLabel: { fontSize: '0.9rem', color: 'var(--text-color-secondary)' },
-    chartsGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '30px' },
-    chartContainer: {
-        backgroundColor: 'var(--card-bg)', padding: '20px', borderRadius: '8px',
-        boxShadow: '0 2px 5px rgba(0,0,0,0.05)', transition: 'box-shadow 0.2s ease',
-        border: '1px solid var(--border-color)', // Thêm border
-    },
-    // --- Skeleton styles ---
-    skeletonCard: { backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', padding: '20px', borderRadius: '8px', height: '120px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' },
-    skeletonTextLarge: { height: '35px', width: '60%', backgroundColor: '#e0e0e0', borderRadius: '4px', marginBottom: '15px', animation: 'pulse 1.5s infinite ease-in-out' },
-    skeletonTextSmall: { height: '15px', width: '80%', backgroundColor: '#e0e0e0', borderRadius: '4px', animation: 'pulse 1.5s infinite ease-in-out' },
-    skeletonChart: { backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', padding: '20px', borderRadius: '8px', height: '340px', animation: 'pulse 1.5s infinite ease-in-out' }
+    welcomeMessage: { marginBottom: '25px', borderBottom: '1px solid var(--border-color)', paddingBottom: '15px' },
+    gridCards: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px', marginBottom: '30px' },
+    card: { background: 'var(--card-bg)', padding: '20px', borderRadius: '10px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '20px', border: '1px solid var(--border-color)', transition: 'transform 0.2s', cursor: 'pointer' },
+    cardIcon: { width: '50px', height: '50px', borderRadius: '12px', background: '#e6fffb', color: '#13c2c2', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem' },
+    cardTitle: { color: 'var(--text-color-secondary)', fontSize: '0.9rem', fontWeight: '600' },
+    cardValue: { fontSize: '1.6rem', fontWeight: 'bold', color: 'var(--text-color)', margin: '5px 0' },
+    cardSub: { fontSize: '0.8rem', color: 'var(--text-color-secondary)' },
+    
+    gridCharts: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '20px' },
+    chartCard: { background: 'var(--card-bg)', padding: '20px', borderRadius: '10px', border: '1px solid var(--border-color)', height: '350px', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' },
+    
+    alertContainer: { background: 'var(--card-bg)', borderRadius: '10px', border: '1px solid var(--border-color)', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' },
+    alertItem: { padding: '15px', borderBottom: '1px solid var(--border-color)', borderLeft: '4px solid transparent', transition: '0.2s' },
 };
 
 export default Dashboard;

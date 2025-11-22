@@ -1,141 +1,108 @@
 # backend/services/alert_service.py
 from sqlalchemy.orm import Session
-from sqlalchemy import extract, func, and_
+from sqlalchemy import extract, func, or_
 from datetime import date
-from models import EmployeeHR, Attendance, Salary
-# --- THÊM IMPORTS ---
-from database import SessionLocalAuth # Cần session để ghi vào Auth DB
-from crud import crud_notification    # Cần CRUD để tạo notification
-import schemas                        # Cần schema NotificationCreate
-# --- KẾT THÚC THÊM ---
-import smtplib # Thư viện gửi email (ví dụ)
-from email.mime.text import MIMEText # Thư viện gửi email (ví dụ)
+import logging
 
-# --- THÊM HÀM HELPER ---
-def _create_alert_notification(type: str, message: str, role_target: str = None, user_id: int = None, related_employee_id: int = None):
-    """Hàm nội bộ để tạo thông báo trong Auth DB, xử lý session."""
+# Import Models
+from models import EmployeeHR, Attendance, Salary
+# Import Session & CRUD cho Notification
+from database import SessionLocalAuth 
+from crud import crud_notification
+import schemas
+
+logger = logging.getLogger(__name__)
+def _create_alert(type: str, message: str, role_target: str = None, related_id: int = None):
+    """Helper để ghi thông báo vào Auth DB (SQLite)."""
     db_auth = SessionLocalAuth()
     try:
-        notification_in = schemas.NotificationCreate(
-            message=message,
-            type=type,
-            role_target=role_target,
-            user_id=user_id,
-            related_employee_id=related_employee_id
+        noti = schemas.NotificationCreate(
+            message=message, type=type, role_target=role_target, related_employee_id=related_id
         )
-        crud_notification.create_notification(db_auth, notification_in)
-        print(f"NOTIFICATION CREATED: [{type}] {message} (Target: {role_target or user_id})") # Log ra console
+        crud_notification.create_notification(db_auth, noti)
+        logger.info(f"ALERT: {message}")
     except Exception as e:
-        print(f"!!! ERROR: Failed to create DB notification: {e}")
+        logger.error(f"Failed to create alert: {e}")
     finally:
         db_auth.close()
-# --- KẾT THÚC HÀM HELPER ---
 
-
+# 1. Kỷ niệm làm việc (Anniversary)
 def check_work_anniversaries(db_hr: Session):
-    """Kiểm tra kỷ niệm và tạo thông báo."""
     today = date.today()
-    anniversary_years = [1, 3, 5, 10, 15, 20]
-
+    milestones = [1, 3, 5, 10, 15, 20, 25, 30] # Năm
+    
     employees = db_hr.query(EmployeeHR).filter(
         extract('month', EmployeeHR.HireDate) == today.month,
-        extract('day', EmployeeHR.HireDate) == today.day
+        extract('day', EmployeeHR.HireDate) == today.day,
+        or_(EmployeeHR.Status == 'Đang làm việc', EmployeeHR.Status == 'Active')
     ).all()
 
     for emp in employees:
-        years_worked = today.year - emp.HireDate.year
-        if years_worked in anniversary_years:
-            message = f"Nhân viên {emp.FullName} (ID: {emp.EmployeeID}) kỷ niệm {years_worked} năm làm việc hôm nay!"
-            # Tạo thông báo cho HR Manager và Admin
-            _create_alert_notification(type="anniversary", message=message, role_target="HR Manager", related_employee_id=emp.EmployeeID)
-            _create_alert_notification(type="anniversary", message=message, role_target="Admin", related_employee_id=emp.EmployeeID)
+        years = today.year - emp.HireDate.year
+        if years in milestones:
+            msg = f"🎉 Kỷ niệm: {emp.FullName} (ID: {emp.EmployeeID}) tròn {years} năm làm việc hôm nay!"
+            _create_alert("anniversary", msg, "HR Manager", emp.EmployeeID)
+            _create_alert("anniversary", msg, "Admin", emp.EmployeeID)
 
+# 2. Nghỉ quá phép (Excessive Leave)
 def check_excessive_leave(db_payroll: Session):
-    """Kiểm tra nghỉ phép quá hạn và tạo thông báo."""
-    MAX_LEAVE_DAYS = 12
+    """
+    Quét dữ liệu từ PAYROLL (MySQL) để tìm nhân viên nghỉ quá hạn mức.
+    Logic: Tổng LeaveDays trong năm > 12.
+    """
     current_year = date.today().year
-
-    excessive_leave_users = db_payroll.query(
-        Attendance.EmployeeID,
-        func.sum(Attendance.LeaveDays).label("total_leave")
-    ).filter(
-        extract('year', Attendance.AttendanceMonth) == current_year
-    ).group_by(Attendance.EmployeeID).having(
-        func.sum(Attendance.LeaveDays) > MAX_LEAVE_DAYS
-    ).all()
-
-    for emp_id, leave_days in excessive_leave_users:
-        message = f"Nhân viên ID {emp_id} đã sử dụng {leave_days} ngày nghỉ phép năm {current_year} (vượt ngưỡng {MAX_LEAVE_DAYS})."
-        # Tạo thông báo cho HR Manager và Admin
-        _create_alert_notification(type="leave_warning", message=message, role_target="HR Manager", related_employee_id=emp_id)
-        _create_alert_notification(type="leave_warning", message=message, role_target="Admin", related_employee_id=emp_id)
-
-def check_payroll_discrepancies(db_payroll: Session):
-    """Kiểm tra chênh lệch lương và tạo thông báo."""
-    latest_salary_date = db_payroll.query(func.max(Salary.SalaryMonth)).scalar()
-    if not latest_salary_date: 
-        print("ALERT_SERVICE: Không có dữ liệu lương (Salary) để so sánh chênh lệch.")
-        return
-
-    previous_salary_date = db_payroll.query(func.max(Salary.SalaryMonth))\
-        .filter(Salary.SalaryMonth < latest_salary_date)\
-        .scalar()
-    if not previous_salary_date: 
-        print(f"ALERT_SERVICE: Chỉ có 1 tháng dữ liệu lương ({latest_salary_date}), không thể so sánh chênh lệch.")
-        return
-
-    total_latest = db_payroll.query(func.sum(Salary.NetSalary))\
-        .filter(Salary.SalaryMonth == latest_salary_date).scalar() or 0
-    total_previous = db_payroll.query(func.sum(Salary.NetSalary))\
-        .filter(Salary.SalaryMonth == previous_salary_date).scalar() or 0
-
-    message = None
-    if total_previous == 0 and total_latest > 0:
-        message = f"Tổng lương tháng {latest_salary_date} là {total_latest:,.0f} VNĐ (tháng trước là 0)."
-    elif total_previous > 0:
-        try:
-            percentage_diff = ((float(total_latest) - float(total_previous)) / float(total_previous)) * 100
-            THRESHOLD = 20.0
-            if abs(percentage_diff) > THRESHOLD:
-                trend = "tăng" if percentage_diff > 0 else "giảm"
-                message = f"Chênh lệch lương lớn ({trend} {abs(percentage_diff):.1f}%)! Tháng {previous_salary_date}: {total_previous:,.0f} VNĐ -> Tháng {latest_salary_date}: {total_latest:,.0f} VNĐ."
-        except ZeroDivisionError: pass
-
-    if message:
-        # Tạo thông báo cho Payroll Manager và Admin
-        _create_alert_notification(type="payroll_discrepancy", message=message, role_target="Payroll Manager")
-        _create_alert_notification(type="payroll_discrepancy", message=message, role_target="Admin")
-    else:
-        # Ghi log nếu không có chênh lệch đáng kể
-        print(f"ALERT_SERVICE: Payroll discrepancy check OK between {previous_salary_date} and {latest_salary_date}.")
-
-
-def send_monthly_payroll_emails(db_hr: Session, db_payroll: Session):
-    """Gửi email lương hàng tháng (Giả lập). Không tạo thông báo trong CSDL."""
-    # Lấy danh sách nhân viên active (giả sử 'Đang làm việc' là status active)
-    active_employees = db_hr.query(EmployeeHR.EmployeeID, EmployeeHR.Email, EmployeeHR.FullName)\
-        .filter(EmployeeHR.Status.ilike('Đang làm việc') | EmployeeHR.Status.ilike('Active'))\
-        .all()
-        
-    # Lấy tháng lương gần nhất (giả định)
-    latest_salary_date = db_payroll.query(func.max(Salary.SalaryMonth)).scalar()
-    if not latest_salary_date:
-        print("ALERT_SERVICE: Không có dữ liệu lương (Salary) để gửi email.")
-        return
-        
-    print(f"SERVICE: Đang chuẩn bị gửi email lương tháng {latest_salary_date} cho {len(active_employees)} nhân viên...")
+    MAX_LEAVE_DAYS = 12 
     
-    # Vòng lặp gửi email (giả lập)
-    for emp_id, email, full_name in active_employees:
-        # Lấy lương của nhân viên này
-        salary_record = db_payroll.query(Salary)\
-            .filter(Salary.EmployeeID == emp_id, Salary.SalaryMonth == latest_salary_date)\
-            .first()
+    try:
+        # 1. Thực hiện Query Aggregation trên MySQL
+        # Tương đương SQL: 
+        # SELECT EmployeeID, SUM(LeaveDays) FROM attendance 
+        # WHERE YEAR(AttendanceMonth) = 2025 
+        # GROUP BY EmployeeID HAVING SUM(LeaveDays) > 12;
+        
+        query = db_payroll.query(
+            Attendance.EmployeeID, 
+            func.sum(Attendance.LeaveDays).label("total_leave")
+        ).filter(
+            extract('year', Attendance.AttendanceMonth) == current_year
+        ).group_by(
+            Attendance.EmployeeID
+        ).having(
+            func.sum(Attendance.LeaveDays) > MAX_LEAVE_DAYS
+        ).all()
 
-        if salary_record:
-            # (Logic giả lập gửi email giữ nguyên)
-            print(f"  -> (Giả lập) Gửi email cho {email} (Lương: {salary_record.NetSalary})")
-        else:
-            print(f"  -> Bỏ qua {email} (Không tìm thấy bản ghi lương tháng {latest_salary_date})")
+        # 2. Tạo cảnh báo cho từng trường hợp vi phạm
+        for emp_id, total_leave in query:
+            # Tính số ngày vượt
+            exceeded = total_leave - MAX_LEAVE_DAYS
+            message = (f"⚠️ Cảnh báo nghỉ phép: Nhân viên {emp_id} đã nghỉ {total_leave} ngày "
+                       f"(Vượt quy định {exceeded} ngày). Vui lòng kiểm tra!")
             
-    print("SERVICE: Gửi email lương hàng tháng hoàn tất.")
+            # Gửi cho HR Manager và Admin
+            _create_alert("leave_warning", message, "HR Manager", emp_id)
+            _create_alert("leave_warning", message, "Admin", emp_id)
+
+    except Exception as e:
+        logger.error(f"Error checking excessive leave in MySQL: {e}")
+
+# 3. Chênh lệch lương (Payroll Discrepancy)
+def check_payroll_discrepancies(db_payroll: Session):
+    months = db_payroll.query(Salary.SalaryMonth).distinct().order_by(Salary.SalaryMonth.desc()).limit(2).all()
+    if len(months) < 2: return
+
+    curr_month, prev_month = months[0][0], months[1][0]
+    
+    curr_total = db_payroll.query(func.sum(Salary.NetSalary)).filter(Salary.SalaryMonth == curr_month).scalar() or 0
+    prev_total = db_payroll.query(func.sum(Salary.NetSalary)).filter(Salary.SalaryMonth == prev_month).scalar() or 0
+
+    if prev_total > 0:
+        diff_percent = ((curr_total - prev_total) / prev_total) * 100
+        if abs(diff_percent) > 20: # Ngưỡng 20%
+            trend = "tăng" if diff_percent > 0 else "giảm"
+            msg = f"💰 Lương bất thường: Tổng lương tháng {curr_month} {trend} {abs(diff_percent):.1f}% so với tháng trước."
+            _create_alert("salary_alert", msg, "Payroll Manager")
+            _create_alert("salary_alert", msg, "Admin")
+
+# 4. Gửi Email (Giữ nguyên placeholder)
+def send_monthly_payroll_emails(db_hr: Session, db_payroll: Session):
+    pass

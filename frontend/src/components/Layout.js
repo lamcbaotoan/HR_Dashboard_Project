@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 // Use NavLink for active styling
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import NotificationsBell from '../components/NotificationsBell'; // Assuming this exists
+import NotificationsBell from '../components/NotificationsBell';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // --- Icons ---
@@ -56,6 +56,11 @@ const OrgIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none
 const PayrollIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>;
 const ReportsIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15.2 2H8.8A1.8 1.8 0 0 0 7 3.8v16.4A1.8 1.8 0 0 0 8.8 22h6.4a1.8 1.8 0 0 0 1.8-1.8V3.8A1.8 1.8 0 0 0 15.2 2z"></path><path d="M8 12h8"></path><path d="M8 16h8"></path><path d="M11 7.5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1-.5-.5v-1z"></path></svg>;
 const ProfileIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>;
+
+// --- New Icons for Updated Functions ---
+const ShareholderIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>;
+const SystemIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>;
+const CheckCircleIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>;
 // --- End Icons ---
 
 
@@ -165,39 +170,90 @@ const Layout = () => {
                         <DashboardIcon /> {!isSidebarCollapsed && <span>Dashboard</span>}
                     </NavLink></li>
 
+                    {/* --- NHÓM ADMIN --- */}
                     {isAdmin && (
-                        <li style={styles.adminLinkSeparator}><NavLink to="/user-management" style={getNavLinkStyle}>
-                           <UsersIcon /> {!isSidebarCollapsed && <span>Quản lý Tài khoản</span>}
-                        </NavLink></li>
-                    )}
-                     {isEmployee && user?.emp_id && (
-                        <li><NavLink to={`/employees/${user.emp_id}`} style={getNavLinkStyle}>
-                           <ProfileIcon/> {!isSidebarCollapsed && <span>Hồ sơ của tôi</span>}
-                        </NavLink></li>
-                     )}
+                        <>
+                            <li><NavLink to="/employees" style={getNavLinkStyle}>
+                               <EmployeesIcon /> {!isSidebarCollapsed && <span>Quản lý Nhân sự</span>}
+                            </NavLink></li>
+                            
+                            {/* [FIX] Thêm mục Quản lý Tổ chức vào menu Admin */}
+                            <li><NavLink to="/management" style={getNavLinkStyle}>
+                                <OrgIcon/> {!isSidebarCollapsed && <span>Quản lý Tổ chức</span>}
+                            </NavLink></li>
 
-                    {(isAdmin || isHrManager) && (
-                        <li><NavLink to="/employees" style={getNavLinkStyle}>
-                           <EmployeesIcon /> {!isSidebarCollapsed && <span>Quản lý Nhân viên</span>}
-                        </NavLink></li>
-                    )}
-
-                    {(isAdmin || isHrManager) && (
-                        <li><NavLink to="/management" style={getNavLinkStyle}>
-                            <OrgIcon/> {!isSidebarCollapsed && <span>Quản lý Tổ chức</span>}
-                        </NavLink></li>
-                    )}
-
-                    {(isAdmin || isPayrollManager) && (
-                        <li><NavLink to="/payroll" style={getNavLinkStyle}>
-                            <PayrollIcon/> {!isSidebarCollapsed && <span>Quản lý Bảng lương</span>}
-                        </NavLink></li>
+                            <li><NavLink to="/payroll" style={getNavLinkStyle}>
+                                <PayrollIcon/> {!isSidebarCollapsed && <span>Quản lý Lương</span>}
+                            </NavLink></li>
+                            <li><NavLink to="/shareholders" style={getNavLinkStyle}>
+                                <ShareholderIcon/> {!isSidebarCollapsed && <span>QL Cổ đông</span>}
+                            </NavLink></li>
+                            <li style={styles.adminLinkSeparator}><NavLink to="/system-admin" style={getNavLinkStyle}>
+                                <SystemIcon /> {!isSidebarCollapsed && <span>Quản trị Hệ thống</span>}
+                            </NavLink></li>
+                            <li><NavLink to="/user-management" style={getNavLinkStyle}>
+                               <UsersIcon /> {!isSidebarCollapsed && <span>Quản lý Tài khoản</span>}
+                            </NavLink></li>
+                        </>
                     )}
 
-                    {(isAdmin || isHrManager || isPayrollManager) && (
-                        <li><NavLink to="/reports" style={getNavLinkStyle}>
-                            <ReportsIcon/> {!isSidebarCollapsed && <span>Báo cáo</span>}
-                        </NavLink></li>
+                    {/* --- NHÓM HR MANAGER --- */}
+                    {(isHrManager) && (
+                        <>
+                            <li><NavLink to="/employees" style={getNavLinkStyle}>
+                               <EmployeesIcon /> {!isSidebarCollapsed && <span>Quản lý Nhân viên</span>}
+                            </NavLink></li>
+                            <li><NavLink to="/management" style={getNavLinkStyle}>
+                                <OrgIcon/> {!isSidebarCollapsed && <span>Quản lý Tổ chức</span>}
+                            </NavLink></li>
+                            <li><NavLink to="/leave-approval" style={getNavLinkStyle}>
+                                <div style={{display: 'flex', alignItems: 'center', gap: isSidebarCollapsed ? 0 : '12px'}}>
+                                    <CheckCircleIcon />
+                                    {!isSidebarCollapsed && (
+                                        <span style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%'}}>
+                                            Duyệt Nghỉ phép
+                                            <span style={styles.notificationDot}>3</span>
+                                        </span>
+                                    )}
+                                </div>
+                            </NavLink></li>
+                            <li><NavLink to="/shareholders" style={getNavLinkStyle}>
+                                <ShareholderIcon/> {!isSidebarCollapsed && <span>Quản lý Cổ đông</span>}
+                            </NavLink></li>
+                            <li><NavLink to="/reports" style={getNavLinkStyle}>
+                                <ReportsIcon/> {!isSidebarCollapsed && <span>Báo cáo</span>}
+                            </NavLink></li>
+                        </>
+                    )}
+
+                    {/* --- NHÓM PAYROLL MANAGER --- */}
+                    {(isPayrollManager) && (
+                        <>
+                            <li><NavLink to="/payroll" style={getNavLinkStyle}>
+                                <PayrollIcon/> {!isSidebarCollapsed && <span>Quản lý Bảng lương</span>}
+                            </NavLink></li>
+                            <li><NavLink to="/shareholders" style={getNavLinkStyle}>
+                                <ShareholderIcon/> {!isSidebarCollapsed && <span>Quản lý Cổ tức</span>}
+                            </NavLink></li>
+                            <li><NavLink to="/reports" style={getNavLinkStyle}>
+                                <ReportsIcon/> {!isSidebarCollapsed && <span>Báo cáo</span>}
+                            </NavLink></li>
+                        </>
+                    )}
+
+                    {/* --- NHÓM EMPLOYEE --- */}
+                    {isEmployee && user?.emp_id && (
+                        <>
+                            <li><NavLink to={`/employees/${user.emp_id}`} style={getNavLinkStyle}>
+                               <ProfileIcon/> {!isSidebarCollapsed && <span>Hồ sơ của tôi</span>}
+                            </NavLink></li>
+                            <li><NavLink to="/my-attendance" style={getNavLinkStyle}>
+                                <CheckCircleIcon /> {!isSidebarCollapsed && <span>Chấm công & Phép</span>}
+                            </NavLink></li>
+                            <li><NavLink to="/my-payslips" style={getNavLinkStyle}>
+                                <PayrollIcon /> {!isSidebarCollapsed && <span>Phiếu lương</span>}
+                            </NavLink></li>
+                        </>
                     )}
                 </ul>
             </motion.nav>
@@ -210,8 +266,7 @@ const Layout = () => {
             >
                 {/* --- Header --- */}
                 <header style={styles.header}>
-                    {/* Can add breadcrumbs or page title here */}
-                    <div></div> {/* Left placeholder */}
+                    <div></div>
                     <div style={styles.headerRight}>
                         <NotificationsBell />
                         <button onClick={toggleTheme} style={styles.themeToggleButton} title="Chuyển chế độ Sáng/Tối">
@@ -224,14 +279,12 @@ const Layout = () => {
                         </div>
                         <button onClick={handleLogout} style={styles.logoutButton} className="logout-button" title="Đăng xuất">
                            <LogoutIcon />
-                           {/* <span>Đăng xuất</span> */} {/* Optional text */}
                         </button>
                     </div>
                 </header>
 
                 {/* --- Page Content with Animation --- */}
                 <main style={styles.contentArea}>
-                    {/* AnimatePresence helps with exit animations */}
                     <AnimatePresence mode="wait">
                          <motion.div
                             key={location.pathname} // Re-renders on path change
@@ -338,6 +391,15 @@ const styles = {
          paddingTop: '15px',
          borderTop: '1px solid var(--border-color-lighter)', // Use a lighter border
      },
+    notificationDot: {
+        backgroundColor: '#ff4d4f',
+        color: '#fff',
+        borderRadius: '10px',
+        padding: '0 6px',
+        fontSize: '0.75rem',
+        fontWeight: 'bold',
+        marginLeft: 'auto', // Push to right
+    },
     mainContentWrapper: {
         flex: 1,
         // marginLeft is dynamic
@@ -372,7 +434,6 @@ const styles = {
         alignItems: 'center',
         justifyContent: 'center',
         color: 'var(--text-color-secondary)',
-        // Removed marginLeft, using gap in headerRight instead
     },
     userMenu: {
         display: 'flex',
@@ -394,7 +455,6 @@ const styles = {
          fontStyle: 'italic',
      },
     logoutButton: {
-        // marginLeft: '20px', Removed, using gap
         padding: '6px', // Padding for icon button
         border: 'none', // Borderless button
         borderRadius: '50%', // Circular button

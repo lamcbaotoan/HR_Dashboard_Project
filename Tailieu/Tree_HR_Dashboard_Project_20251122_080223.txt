@@ -1,0 +1,93 @@
+Project: HR_Dashboard_Project
+├── Cachchay.txt
+├── HUMAN_2025.BAK
+├── Tailieu
+│   ├── 4. Softtware Requirement Specification_IEEE 830-1998.docx
+│   ├── CEO_MEMO.pdf
+│   ├── HUMAN_2025.sql
+│   ├── code
+│   │   ├── Code_backend_20251122_080106.html
+│   │   ├── Code_backend_20251122_080106.txt
+│   │   ├── Code_frontend_20251122_080121.html
+│   │   ├── Code_frontend_20251122_080121.txt
+│   │   ├── Code_frontend_20251122_080128.html
+│   │   ├── Code_frontend_20251122_080128.txt
+│   │   └── tongquan.txt
+│   ├── function update.docx
+│   ├── khungtruongtrinh.txt
+│   └── payroll.sql
+├── backend
+│   ├── .env
+│   ├── api
+│   │   └── v1
+│   │       ├── api.py
+│   │       └── endpoints
+│   │           ├── departments.py
+│   │           ├── employees.py
+│   │           ├── login.py
+│   │           ├── notifications.py
+│   │           ├── payroll.py
+│   │           ├── positions.py
+│   │           ├── reports.py
+│   │           └── users.py
+│   ├── auth
+│   │   └── auth.py
+│   ├── core
+│   │   ├── config.py
+│   │   └── security.py
+│   ├── crud
+│   │   ├── crud_employee.py
+│   │   ├── crud_hr.py
+│   │   ├── crud_notification.py
+│   │   ├── crud_payroll.py
+│   │   └── crud_user.py
+│   ├── dashboard_auth.db
+│   ├── database.py
+│   ├── main.py
+│   ├── models.py
+│   ├── package.json
+│   ├── requirements.txt
+│   ├── schemas.py
+│   ├── seed_admin.py
+│   └── services
+│       └── alert_service.py
+├── frontend
+│   ├── .env
+│   ├── code.txt
+│   ├── package.json
+│   ├── public
+│   │   └── index.html
+│   └── src
+│       ├── App.js
+│       ├── components
+│       │   ├── AddEmployeeModal.js
+│       │   ├── DepartmentModal.js
+│       │   ├── EditEmployeeModal.js
+│       │   ├── EditSalaryModal.js
+│       │   ├── Layout.js
+│       │   ├── NotificationsBell.js
+│       │   ├── PositionModal.js
+│       │   ├── ProtectedRoute.js
+│       │   ├── ResetPasswordModal.js
+│       │   ├── SetRoleModal.js
+│       │   └── charts
+│       │       ├── AvgSalaryChart.js
+│       │       └── EmployeeDeptChart.js
+│       ├── context
+│       │   └── AuthContext.js
+│       ├── index.js
+│       ├── pages
+│       │   ├── AdminManagement.js
+│       │   ├── Dashboard.js
+│       │   ├── Departments.js
+│       │   ├── EmployeeDetail.js
+│       │   ├── EmployeeList.js
+│       │   ├── Login.js
+│       │   ├── PayrollManagement.js
+│       │   ├── Positions.js
+│       │   ├── Reports.js
+│       │   └── UserManagement.js
+│       └── services
+│           ├── api.js
+│           └── authService.js
+└── payroll.sql

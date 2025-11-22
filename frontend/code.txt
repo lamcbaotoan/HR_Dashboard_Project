@@ -1,0 +1,296 @@
+import os
+
+# ================== CÁC MỤC CẦN BỎ QUA ==================
+IGNORE_DIRS = {
+    ".git", ".github", ".vs", "bin", "obj", "tailieu",
+    "bootstrap", "node_modules", "__pycache__"
+}
+
+IGNORE_FILES = {
+    ".gitignore", ".gitattributes", "desktop.ini"
+}
+
+# ================== KIỂM TRA BỎ QUA ==================
+def should_ignore_dir(dirname):
+    return dirname.strip().lower() in IGNORE_DIRS
+
+def should_ignore_file(filename):
+    return filename.strip().lower() in IGNORE_FILES
+
+
+# ================== VẼ CÂY THƯ MỤC ==================
+def draw_structure(root_path, prefix="", is_last=True, output_lines=None, level=0, max_depth=5):
+    if output_lines is None:
+        output_lines = []
+
+    basename = os.path.basename(root_path.rstrip("\\/"))
+    connector = "└── " if is_last else "├── "
+    output_lines.append(f"{prefix}{connector}{basename}/")
+
+    if level >= max_depth:
+        return output_lines
+
+    new_prefix = prefix + ("    " if is_last else "│   ")
+
+    try:
+        entries = sorted(os.listdir(root_path))
+    except (PermissionError, FileNotFoundError):
+        return output_lines
+
+    dirs = [e for e in entries if os.path.isdir(os.path.join(root_path, e))]
+    files = [e for e in entries if os.path.isfile(os.path.join(root_path, e))]
+
+    dirs = [d for d in dirs if not should_ignore_dir(d)]
+    files = [f for f in files if not should_ignore_file(f)]
+
+    for i, d in enumerate(dirs):
+        sub_path = os.path.join(root_path, d)
+        draw_structure(sub_path, new_prefix, i == len(dirs) - 1 and not files, output_lines, level + 1, max_depth)
+
+    for i, f in enumerate(files):
+        connector = "└── " if i == len(files) - 1 else "├── "
+        output_lines.append(f"{new_prefix}{connector}{f}")
+
+    return output_lines
+
+
+def export_project_tree(project_path, save_dir):
+    project_name = os.path.basename(os.path.normpath(project_path))
+    output_file = os.path.join(save_dir, f"tree_{project_name}.txt")
+
+    print(f"\n🌳 Đang tạo sơ đồ cây: {project_name}")
+
+    lines = [f"Solution '{project_name}'/\n│"]
+
+    try:
+        entries = sorted(os.listdir(project_path))
+    except FileNotFoundError:
+        print("❌ Đường dẫn không hợp lệ!")
+        return
+
+    dirs = [
+        d for d in entries
+        if os.path.isdir(os.path.join(project_path, d)) and not should_ignore_dir(d)
+    ]
+
+    for i, d in enumerate(dirs):
+        sub_lines = draw_structure(os.path.join(project_path, d), "", i == len(dirs) - 1)
+        lines.extend(sub_lines)
+        if i < len(dirs) - 1:
+            lines.append("│")
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    print(f"✅ Đã lưu file cây tại: {output_file}")
+
+
+# ================== XUẤT MÃ NGUỒN ==================
+def read_file_safe(file_path):
+    encodings = ["utf-8", "utf-8-sig", "latin1"]
+    for enc in encodings:
+        try:
+            with open(file_path, "r", encoding=enc) as f:
+                return f.read()
+        except Exception:
+            continue
+    return None
+
+
+def export_project_code(project_path, save_dir):
+    project_name = os.path.basename(os.path.normpath(project_path))
+    output_file = os.path.join(save_dir, f"code_{project_name}.txt")
+
+    full_ext = [".cs", ".xaml", ".cshtml", ".py", ".js", ".html", ".json"]
+    json_files = ["launchsettings.json", "appsettings.json"]
+
+    print(f"\n🚀 Đang xuất mã nguồn: {project_name}")
+
+    with open(output_file, "w", encoding="utf-8") as out:
+        out.write(f"=== MÃ NGUỒN DỰ ÁN: {project_name} ===\n\n")
+
+        for root, dirs, files in os.walk(project_path):
+
+            # ❗ BỎ QUA TẤT CẢ THƯ MỤC TRONG IGNORE_DIRS (node_modules, .git, bin,…)
+            dirs[:] = [d for d in dirs if d.lower() not in IGNORE_DIRS]
+
+            # ❗ BỎ QUA FILE TRONG IGNORE_FILES (desktop.ini,…)
+            files = [f for f in files if f.lower() not in IGNORE_FILES]
+
+            for file in files:
+                full_path = os.path.join(root, file)
+                ext = os.path.splitext(file)[1].lower()
+
+                try:
+                    if (
+                        ext in full_ext
+                        or file.lower() in json_files
+                        or file.lower().endswith(".xaml.cs")
+                        or file.lower().endswith(".cshtml.cs")
+                    ):
+                        content = read_file_safe(full_path)
+                        out.write(f"{full_path}\n")
+                        out.write("=" * 80 + "\n")
+                        out.write(content if content else "(Không đọc được nội dung)")
+                        out.write("\n" + "=" * 80 + "\n\n")
+                        print(f"📄 Xuất nội dung: {file}")
+                    else:
+                        out.write(f"{full_path}\n")
+                        print(f"📄 Ghi đường dẫn: {file}")
+
+                except Exception as e:
+                    print(f"⚠️ Lỗi {file}: {e}")
+
+    print(f"🎉 Đã lưu mã nguồn tại: {output_file}")
+
+    project_name = os.path.basename(os.path.normpath(project_path))
+    output_file = os.path.join(save_dir, f"code_{project_name}.txt")
+
+    # Các loại file cần đọc nội dung
+    TEXT_EXT = [
+        ".cs", ".xaml", ".cshtml", ".py", ".js", ".html", ".css",
+        ".json", ".env", ".xml", ".txt"
+    ]
+
+    # File DB → chỉ ghi đường dẫn (không mở)
+    DB_EXT = [".db", ".sqlite", ".sqlite3"]
+
+    print(f"\n🚀 Đang xuất mã nguồn: {project_name}")
+
+    with open(output_file, "w", encoding="utf-8") as out:
+        out.write(f"=== MÃ NGUỒN DỰ ÁN: {project_name} ===\n\n")
+
+        for root, dirs, files in os.walk(project_path):
+            dirs[:] = [d for d in dirs if d.lower() not in ("bin", "obj")]
+
+            for file in files:
+                full_path = os.path.join(root, file)
+                ext = os.path.splitext(file)[1].lower()
+
+                try:
+                    # ❗ File database → KHÔNG đọc nội dung
+                    if ext in DB_EXT:
+                        out.write(f"{full_path}\n(Không xuất nội dung file database)\n\n")
+                        print(f"🗄️ Bỏ qua nội dung DB: {file}")
+                        continue
+
+                    # ❗ File văn bản → xuất nội dung
+                    if ext in TEXT_EXT or file.lower().endswith(".xaml.cs"):
+                        content = read_file_safe(full_path)
+                        out.write(f"{full_path}\n")
+                        out.write("=" * 80 + "\n")
+                        out.write(content if content else "(Không đọc được nội dung)")
+                        out.write("\n" + "=" * 80 + "\n\n")
+                        print(f"📄 Xuất nội dung: {file}")
+                    else:
+                        out.write(f"{full_path}\n")
+                        print(f"📄 Ghi đường dẫn: {file}")
+
+                except Exception as e:
+                    print(f"⚠️ Lỗi {file}: {e}")
+
+    print(f"🎉 Đã lưu mã nguồn tại: {output_file}")
+
+
+# ================== CHƯƠNG TRÌNH CHÍNH ==================
+if __name__ == "__main__":
+    print("=== TOOL: VẼ CÂY / XUẤT CODE DỰ ÁN ===")
+
+    save_dir = input("💾 Nhập thư mục lưu file (Enter = thư mục hiện tại): ").strip('" ')
+    if not save_dir:
+        save_dir = os.getcwd()
+    elif not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    while True:
+        print("\n--- CHỌN CHỨC NĂNG ---")
+        print("1. Vẽ sơ đồ cây thư mục")
+        print("2. Xuất mã nguồn dự án")
+        print("3. Chạy cả hai")
+        print("0. Thoát")
+
+        choice = input("👉 Nhập lựa chọn (0-3): ").strip()
+
+        if choice == "0":
+            print("🛑 Thoát chương trình.")
+            break
+
+        while True:
+            project_path = input("\n📁 Dán đường dẫn dự án ('ok' để quay lại menu): ").strip('" ')
+            if project_path.lower() == "ok":
+                break
+            if not os.path.exists(project_path):
+                print("❌ Đường dẫn không tồn tại!")
+                continue
+
+            if choice == "1":
+                export_project_tree(project_path, save_dir)
+
+            elif choice == "2":
+                export_project_code(project_path, save_dir)
+
+            elif choice == "3":
+                export_project_tree(project_path, save_dir)
+                export_project_code(project_path, save_dir)
+
+            print("\n🎯 Đã xong! Bạn có thể nhập dự án khác hoặc gõ 'ok' để thoát.\n")
+////////////////////////////////////////////////////////////
+nâng cấp thêm code C# hoặc py để chọn để lọc ra cho  khỏi bị lẫn các thư mục phụ 
+Bạn đã nói:
+.env vẫn đọc
+Bạn đã nói:
+hoàn thiện code với tính năng được nâng cấp
+Bạn đã nói:
+thêm js nữa
+Bạn đã nói:
+Thêm PHP / Laravel
+
+Thêm Java
+
+Thêm Flutter (Dart)
+
+Xuất ra ZIP
+
+Xuất ra HTML có highlight màu
+
+Giao diện GUI (Tkinter) để chọn đường dẫn bằng nút bấm
+
+Bạn đã nói:
+'ScrolledText' object is not callable
+  File "E:\Tai Lieu Hoc Tap\CS 445 AM\xuatcode_va_xuatcay.py", line 465, in _run_export_thread
+    self.log("=== Bắt đầu xuất ===", "info")
+TypeError: 'ScrolledText' object is not callable
+
+During handling of the above exception, another exception occurred:
+
+  File "E:\Tai Lieu Hoc Tap\CS 445 AM\xuatcode_va_xuatcay.py", line 491, in _run_export_thread
+    self.log(f"Lỗi: {e}", "err")
+TypeError: 'ScrolledText' object is not callable
+Bạn đã nói:
+Thêm nút clear log?
+
+Hiện thanh progress?
+
+Tắt nút khi đang export?
+
+Hiện popup báo thành công?
+ok 
+Bạn đã nói:
+✔ Xuất ra HTML highlight màu
+✔ Thanh tiến trình dạng %
+✔ Log màu (info = xanh, warning = vàng, error = đỏ)
+✔ Nút Stop export
+Bạn đã nói:
+Hiển thị tên file đang xử lý
+
+Dark/light mode
+
+Ghi log ra file
+
+Animation khi export
+Bạn đã nói:
+hoàn thiện file code với những tính năng được nâng cấp
+Bạn đã nói:
+ủa logic đâu?
+Bạn đã nói:
+viết đầy code và logic cùng với những nâng cấp mới

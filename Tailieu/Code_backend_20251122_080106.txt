@@ -1,0 +1,2344 @@
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\.env
+================================================================================
+# Cấu hình HUMAN_2025 (SQL Server)
+# Đang sử dụng Windows Authentication
+SQL_SERVER_DRIVER=ODBC Driver 17 for SQL Server
+SQL_SERVER_SERVER=(LocalDB)\MSSQLLocalDB
+SQL_SERVER_DATABASE=HUMAN_2025
+SQL_SERVER_USER=
+SQL_SERVER_PASSWORD=
+
+# Cấu hình PAYROLL (MySQL)
+MYSQL_HOST=localhost
+MYSQL_DATABASE=payroll
+MYSQL_USER=root
+MYSQL_PASSWORD=031124
+
+# Bảo mật JWT
+SECRET_KEY=b3a9f8c1d7e0a5b2f6c8d1e3a9b7f2d5e8c1a0b3f6d8e2a4c7b1f9d0e5a2c6b8
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=60
+
+# CSDL mới cho Dashboard (Quản lý User & Phân quyền)
+DASHBOARD_DB_URL="sqlite:///./dashboard_auth.db"
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\database.py
+================================================================================
+# backend/database.py
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, scoped_session
+from core.config import settings
+
+# --- Thiết lập 3 Engines và 3 Bases ---
+
+# 1. SQL Server (HUMAN_2025)
+engine_sqlserver = create_engine(
+    settings.SQLALCHEMY_DATABASE_URI_SQLSERVER,
+    # --- THÊM CẤU HÌNH POOL ---
+    pool_size=10,         # Tăng số kết nối cơ bản
+    max_overflow=20,      # Tăng số kết nối dự phòng
+    pool_timeout=30,      # Giữ nguyên timeout chờ kết nối
+    # pool_recycle=1800   # Có thể thêm nếu SQL Server của bạn đóng kết nối nhàn rỗi
+    # --------------------------
+)
+SessionLocalSQLServer = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine_sqlserver))
+BaseSQLServer = declarative_base()
+
+# 2. MySQL (PAYROLL)
+engine_mysql = create_engine(
+    settings.SQLALCHEMY_DATABASE_URI_MYSQL,
+    # --- THÊM CẤU HÌNH POOL ---
+    pool_size=10,
+    max_overflow=20,
+    pool_timeout=30,
+    pool_recycle=3600    # Rất nên có cho MySQL để tránh lỗi connection closed
+    # --------------------------
+)
+SessionLocalMySQL = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine_mysql))
+BaseMySQL = declarative_base()
+
+# 3. SQLite (DASHBOARD AUTH)
+engine_auth = create_engine(
+    settings.DASHBOARD_DB_URL,
+    connect_args={"check_same_thread": False}, # Bắt buộc cho SQLite
+    # --- THÊM CẤU HÌNH POOL CHO SQLITE ---
+    # SQLite thường không cần pool phức tạp, nhưng QueuePool là mặc định
+    # Tăng giới hạn nếu cần, nhưng vấn đề SQLite thường là ghi đồng thời
+    pool_size=10,         # Tăng nhẹ
+    max_overflow=20       # Tăng nhẹ
+    # pool_timeout=30     # Mặc định thường là đủ
+    # ------------------------------------
+)
+SessionLocalAuth = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine_auth))
+BaseAuth = declarative_base()
+
+
+# --- Dependencies cho 3 CSDL (Giữ nguyên) ---
+def get_db_sqlserver():
+    db = SessionLocalSQLServer()
+    try:
+        yield db
+    finally:
+        SessionLocalSQLServer.remove()
+
+def get_db_mysql():
+    db = SessionLocalMySQL()
+    try:
+        yield db
+    finally:
+        SessionLocalMySQL.remove()
+
+def get_db_auth():
+    db = SessionLocalAuth()
+    try:
+        yield db
+    finally:
+        SessionLocalAuth.remove()
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\main.py
+================================================================================
+# backend/main.py
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from apscheduler.schedulers.background import BackgroundScheduler
+from contextlib import asynccontextmanager
+import atexit
+# --- THÊM IMPORT NÀY ---
+from sqlalchemy.orm import joinedload 
+# --- KẾT THÚC THÊM ---
+
+from api.v1.api import api_router
+from database import SessionLocalSQLServer, SessionLocalMySQL, SessionLocalAuth, engine_auth, BaseAuth
+from services.alert_service import (
+    check_work_anniversaries,
+    check_excessive_leave,
+    send_monthly_payroll_emails,
+    check_payroll_discrepancies
+)
+# Sửa import: Lấy EmployeeHR trực tiếp từ models
+from models import User as AuthUser, EmployeeHR
+from crud import crud_user 
+import schemas 
+from core.security import get_password_hash 
+from auth.auth import get_user_role as get_role_from_hr
+
+
+def run_alert_jobs():
+    """Các hàm chạy dịch vụ cảnh báo (chạy hàng ngày)"""
+    
+    print("Scheduler running daily jobs...")
+    db_hr = SessionLocalSQLServer()
+    db_payroll = SessionLocalMySQL()
+    try:
+        check_work_anniversaries(db_hr)
+        check_excessive_leave(db_payroll)
+        check_payroll_discrepancies(db_payroll)
+    except Exception as e:
+        print(f"Lỗi khi chạy các job hàng ngày: {e}")
+    finally:
+        if db_hr: db_hr.close()
+        if db_payroll: db_payroll.close()
+
+
+def run_monthly_email_job():
+    """Hàm wrapper để chạy job gửi email lương hàng tháng"""
+ 
+    print("Scheduler running monthly email job...")
+    db_hr = SessionLocalSQLServer()
+    db_payroll = SessionLocalMySQL()
+    try:
+        send_monthly_payroll_emails(db_hr, db_payroll)
+    except Exception as e:
+        print(f"Lỗi khi chạy job email hàng tháng: {e}")
+    finally:
+        if db_hr: db_hr.close()
+        if db_payroll: db_payroll.close()
+
+
+def initial_sync_and_setup():
+    """
+    Hàm này chạy một lần khi server khởi động:
+    1. Tạo CSDL auth nếu chưa có.
+    2. Tạo/Kiểm tra tài khoản ADMIN mặc định.
+    3. Tạo/Kiểm tra tài khoản ADMIN mặc định.
+    4. Đồng bộ nhân viên từ HR_DB sang Auth_DB.
+    """
+    print("--- BẮT ĐẦU KHỞI TẠO VÀ ĐỒNG BỘ ---")
+    db_auth = SessionLocalAuth()
+    db_hr = SessionLocalSQLServer()
+    try:
+        # 1. Tạo bảng trong CSDL Auth
+        print("1. Đang kiểm tra và tạo bảng 'users' trong dashboard_auth.db...")
+        BaseAuth.metadata.create_all(bind=engine_auth)
+
+        # 2. Tạo/Kiểm tra tài khoản DEV (BỎ QUA)
+        print("2. (Đã bỏ qua) Tạo tài khoản DEV...")
+        
+        # --- TẠO/KIỂM TRA TÀI KHOẢN ADMIN ---
+        print("3. Đang kiểm tra và tạo tài khoản ADMIN...")
+        admin_email = "admin@company.vn"
+        admin_user = crud_user.get_user_by_email(db_auth, email=admin_email)
+        if not admin_user:
+            admin_schema = schemas.UserCreate(
+                full_name="Admin Dashboard",
+                email=admin_email,
+                password="adminpassword123", # Mật khẩu gốc sẽ được băm
+                role="Admin",
+                phone_number="0000000000" 
+            )
+            crud_user.create_user(db_auth, admin_schema)
+            print("   -> Đã tạo tài khoản ADMIN thành công.")
+        else:
+            print("   -> Tài khoản ADMIN đã tồn tại.")
+        # --- KẾT THÚC ---
+
+        # 4. Đồng bộ nhân viên từ HR sang Auth
+        print("4. Bắt đầu đồng bộ nhân viên từ HUMAN_2025 sang Auth DB...")
+        hr_employees_query = db_hr.query(EmployeeHR).options(
+             joinedload(EmployeeHR.department), # Eager load 
+             joinedload(EmployeeHR.position)   # Eager load 
+        )
+        try:
+             hr_employees = list(hr_employees_query.all()) 
+        except Exception as e_hr:
+             print(f"!!! LỖI khi lấy danh sách nhân viên từ HR DB: {e_hr}")
+             hr_employees = [] 
+        
+        synced_count = 0
+        for emp in hr_employees:
+            if not emp.Email:
+                continue
+
+            auth_user = crud_user.get_user_by_email(db_auth, email=emp.Email)
+            if not auth_user:
+                role = get_role_from_hr(emp) 
+                user_schema = schemas.UserCreate(
+                    full_name=emp.FullName,
+                    email=emp.Email,
+                    password="password123", 
+                    role=role,
+                    phone_number=emp.PhoneNumber,
+                    employee_id_link=emp.EmployeeID
+                )
+                try:
+                    crud_user.create_user(db_auth, user_schema)
+                    synced_count += 1
+                except Exception as e_sync:
+                    print(f"   -> LỖI đồng bộ user {emp.Email}: {e_sync}")
+
+
+        print(f"   -> Đồng bộ hoàn tất. Đã thêm {synced_count} nhân viên mới vào Auth DB.")
+
+    except Exception as e:
+        print(f"!!! LỖI TRONG QUÁ TRÌNH KHỞI TẠO CHUNG: {e}")
+    finally:
+        if db_auth: db_auth.close()
+        if db_hr: db_hr.close()
+    print("--- KẾT THÚC KHỞI TẠO VÀ ĐỒNG BỘ ---\n")
+
+
+# Khởi tạo scheduler
+scheduler = BackgroundScheduler()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    initial_sync_and_setup()
+
+    scheduler.add_job(run_alert_jobs, 'interval', days=1, id="daily_check")
+    scheduler.add_job(run_monthly_email_job, 'cron', day=1, hour=9, id="monthly_payroll")
+    scheduler.start()
+    print("Scheduler started...")
+    yield
+    scheduler.shutdown()
+    print("Scheduler stopped.")
+
+app = FastAPI(
+    title="HRM & Payroll Integrated Dashboard API",
+    description="API tích hợp HUMAN_2025 (SQL Server) và PAYROLL (MySQL)",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(api_router, prefix="/api/v1")
+
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to the Integrated Dashboard API"}
+
+atexit.register(lambda: scheduler.shutdown(wait=False))
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\models.py
+================================================================================
+# backend/models.py
+from sqlalchemy import Column, Integer, String, Date, DateTime, DECIMAL, ForeignKey, NVARCHAR, Boolean
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func # Thêm func
+from database import BaseSQLServer, BaseMySQL, BaseAuth
+
+# --- Models cho HUMAN_2025 (SQL Server) ---
+
+class DepartmentHR(BaseSQLServer):
+    __tablename__ = 'Departments'
+    DepartmentID = Column(Integer, primary_key=True, index=True)
+    DepartmentName = Column(NVARCHAR(100), nullable=False)
+    employees = relationship("EmployeeHR", back_populates="department")
+
+class PositionHR(BaseSQLServer):
+    __tablename__ = 'Positions'
+    PositionID = Column(Integer, primary_key=True, index=True)
+    PositionName = Column(NVARCHAR(100), nullable=False)
+    employees = relationship("EmployeeHR", back_populates="position")
+
+class EmployeeHR(BaseSQLServer):
+    __tablename__ = 'Employees'
+    EmployeeID = Column(Integer, primary_key=True, index=True)
+    FullName = Column(NVARCHAR(100), nullable=False)
+    DateOfBirth = Column(Date, nullable=False)
+    Gender = Column(NVARCHAR(10))
+    PhoneNumber = Column(NVARCHAR(15))
+    Email = Column(NVARCHAR(100), unique=True)
+    HireDate = Column(Date, nullable=False)
+    DepartmentID = Column(Integer, ForeignKey('Departments.DepartmentID'))
+    PositionID = Column(Integer, ForeignKey('Positions.PositionID'))
+    Status = Column(NVARCHAR(50))
+
+    department = relationship("DepartmentHR", back_populates="employees")
+    position = relationship("PositionHR", back_populates="employees")
+    
+    dividends = relationship("Dividend", back_populates="employee")
+
+class Dividend(BaseSQLServer):
+    __tablename__ = 'Dividends'
+    DividendID = Column(Integer, primary_key=True, index=True)
+    EmployeeID = Column(Integer, ForeignKey('Employees.EmployeeID'))
+    DividendAmount = Column(DECIMAL(12, 2), nullable=False)
+    DividendDate = Column(Date, nullable=False)
+
+    employee = relationship("EmployeeHR", back_populates="dividends")
+
+
+# --- Models cho PAYROLL (MySQL) ---
+
+class EmployeePayroll(BaseMySQL):
+    __tablename__ = 'employees'
+    EmployeeID = Column(Integer, primary_key=True, index=True)
+    FullName = Column(String(100), nullable=False)
+    DepartmentID = Column(Integer, ForeignKey('departments.DepartmentID'))
+    PositionID = Column(Integer, ForeignKey('positions.PositionID'))
+    Status = Column(String(50))
+
+    salaries = relationship("Salary", back_populates="employee")
+    attendances = relationship("Attendance", back_populates="employee")
+
+class DepartmentPayroll(BaseMySQL):
+    __tablename__ = 'departments'
+    DepartmentID = Column(Integer, primary_key=True, index=True)
+    DepartmentName = Column(String(100), nullable=False)
+
+class PositionPayroll(BaseMySQL):
+    __tablename__ = 'positions'
+    PositionID = Column(Integer, primary_key=True, index=True)
+    PositionName = Column(String(100), nullable=False)
+
+class Salary(BaseMySQL):
+    __tablename__ = 'salaries'
+    SalaryID = Column(Integer, primary_key=True, index=True)
+    EmployeeID = Column(Integer, ForeignKey('employees.EmployeeID'))
+    SalaryMonth = Column(Date, nullable=False)
+    BaseSalary = Column(DECIMAL(12, 2), nullable=False)
+    Bonus = Column(DECIMAL(12, 2), default=0.00)
+    Deductions = Column(DECIMAL(12, 2), default=0.00)
+    NetSalary = Column(DECIMAL(12, 2), nullable=False)
+
+    employee = relationship("EmployeePayroll", back_populates="salaries")
+
+class Attendance(BaseMySQL):
+    __tablename__ = 'attendance'
+    AttendanceID = Column(Integer, primary_key=True, index=True)
+    EmployeeID = Column(Integer, ForeignKey('employees.EmployeeID'))
+    WorkDays = Column(Integer, nullable=False)
+    AbsentDays = Column(Integer, default=0)
+    LeaveDays = Column(Integer, default=0)
+    AttendanceMonth = Column(Date, nullable=False)
+
+    employee = relationship("EmployeePayroll", back_populates="attendances")
+
+
+# --- Model cho DASHBOARD AUTH (SQLite) ---
+
+class User(BaseAuth):
+    __tablename__ = 'users'
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(100), unique=True, index=True, nullable=False)
+    phone_number = Column(String(15), unique=True, index=True, nullable=True)
+    full_name = Column(String(100), nullable=True)
+    hashed_password = Column(String(255), nullable=False)
+    role = Column(String(50), nullable=False)
+    employee_id_link = Column(Integer, unique=True, nullable=True)
+
+# --- THÊM MODEL MỚI CHO THÔNG BÁO ---
+class Notification(BaseAuth):
+    __tablename__ = 'notifications'
+    id = Column(Integer, primary_key=True, index=True)
+    # ID của người dùng cụ thể nhận thông báo (NULL nếu là thông báo hệ thống/vai trò)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    # Vai trò mục tiêu (VD: "Admin", "HR Manager") - NULL nếu cho user_id cụ thể hoặc toàn hệ thống
+    role_target = Column(String(50), nullable=True)
+    # Nội dung thông báo
+    message = Column(String(500), nullable=False)
+    # Loại thông báo (để phân loại, VD: "anniversary", "leave_warning", "payroll_discrepancy")
+    type = Column(String(50), nullable=False)
+    # Trạng thái đã đọc
+    is_read = Column(Boolean, default=False, nullable=False)
+    # Thời gian tạo
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # ID của nhân viên liên quan (VD: ID nhân viên có kỷ niệm, ID nhân viên nghỉ quá phép)
+    related_employee_id = Column(Integer, nullable=True)
+
+    # (Không bắt buộc) Tạo quan hệ ngược lại với User nếu cần
+    # user = relationship("User", back_populates="notifications")
+
+    # ... (Giữ nguyên code cũ)
+
+# --- Thêm vào Models cho PAYROLL (MySQL) ---
+class LeaveRequest(BaseMySQL):
+    __tablename__ = 'leave_requests'
+    RequestID = Column(Integer, primary_key=True, index=True)
+    EmployeeID = Column(Integer, ForeignKey('employees.EmployeeID'))
+    LeaveType = Column(String(50)) # Phép năm, Nghỉ ốm...
+    StartDate = Column(Date, nullable=False)
+    EndDate = Column(Date, nullable=False)
+    Reason = Column(String(255))
+    Status = Column(String(50), default='Pending') # Pending, Approved, Rejected
+    ApprovedBy = Column(String(100), nullable=True)
+    CreatedAt = Column(DateTime(timezone=True), server_default=func.now())
+
+    employee = relationship("EmployeePayroll", back_populates="leave_requests")
+
+# Cập nhật quan hệ trong EmployeePayroll
+EmployeePayroll.leave_requests = relationship("LeaveRequest", back_populates="employee")
+
+
+# --- Thêm vào Models cho AUTH (SQLite) ---
+class AuditLog(BaseAuth):
+    __tablename__ = 'audit_logs'
+    id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String(100))
+    action = Column(String(50)) # LOGIN, UPDATE, DELETE, SYNC
+    details = Column(String(255))
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
+class SystemConfig(BaseAuth):
+    __tablename__ = 'system_configs'
+    key = Column(String(50), primary_key=True)
+    value = Column(String(255))
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\schemas.py
+================================================================================
+# backend/schemas.py
+from pydantic import BaseModel, EmailStr, ConfigDict
+from typing import Optional, List
+from datetime import date, datetime # Thêm datetime
+from decimal import Decimal
+
+# --- Schemas chung ---
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    email: Optional[EmailStr] = None
+    role: Optional[str] = None
+    emp_id: Optional[int] = None
+
+class User(BaseModel):
+    id: Optional[int] = None
+    email: EmailStr
+    role: str
+    emp_id: Optional[int] = None
+
+# --- Schemas cho User (CSDL Auth mới) ---
+class UserBase(BaseModel):
+    email: EmailStr
+    full_name: Optional[str] = None
+    phone_number: Optional[str] = None
+    role: str
+    employee_id_link: Optional[int] = None
+
+class UserCreate(UserBase):
+    password: str
+
+class UserRoleUpdate(BaseModel):
+    role: str
+
+class UserPasswordUpdate(BaseModel):
+    new_password: str
+
+class UserInDB(UserBase):
+    id: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+# --- Schemas cho HR (HUMAN_2025) ---
+class DepartmentBase(BaseModel):
+    DepartmentName: str
+
+class DepartmentCreate(DepartmentBase):
+    pass
+
+class DepartmentUpdate(BaseModel):
+    DepartmentName: Optional[str] = None
+
+class Department(DepartmentBase):
+    DepartmentID: int
+    model_config = ConfigDict(from_attributes=True)
+
+class PositionBase(BaseModel):
+    PositionName: str
+
+class PositionCreate(PositionBase):
+    pass
+
+class PositionUpdate(BaseModel):
+    PositionName: Optional[str] = None
+
+class Position(PositionBase):
+    PositionID: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+# --- Schemas cho Employee ---
+class EmployeeBase(BaseModel):
+    FullName: str
+    Email: EmailStr
+    DateOfBirth: date
+    HireDate: date
+    DepartmentID: int
+    PositionID: int
+    Status: str
+    Gender: Optional[str] = None
+    PhoneNumber: Optional[str] = None
+
+class EmployeeCreate(EmployeeBase):
+    password: str
+
+class EmployeeUpdate(BaseModel):
+    FullName: Optional[str] = None
+    DepartmentID: Optional[int] = None
+    PositionID: Optional[int] = None
+    Status: Optional[str] = None
+    PhoneNumber: Optional[str] = None
+
+class Employee(EmployeeBase):
+    EmployeeID: int
+    department: Optional[Department] = None
+    position: Optional[Position] = None
+    role: Optional[str] = None
+    auth_user_id: Optional[int] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+# --- Schemas cho Payroll ---
+class SalaryBase(BaseModel):
+    SalaryMonth: date
+    BaseSalary: Decimal
+    Bonus: Decimal
+    Deductions: Decimal
+    NetSalary: Decimal
+
+class Salary(SalaryBase):
+    SalaryID: int
+    model_config = ConfigDict(from_attributes=True)
+
+class SalaryUpdate(BaseModel):
+    BaseSalary: Optional[Decimal] = None
+    Bonus: Optional[Decimal] = None
+    Deductions: Optional[Decimal] = None
+
+class Attendance(BaseModel):
+    AttendanceID: int
+    AttendanceMonth: date
+    WorkDays: int
+    AbsentDays: int
+    LeaveDays: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EmployeeFullProfile(Employee):
+    salaries: List[Salary] = []
+    attendances: List[Attendance] = []
+
+# --- THÊM SCHEMAS CHO NOTIFICATION ---
+class NotificationBase(BaseModel):
+    message: str
+    type: str
+    is_read: bool = False
+    created_at: Optional[datetime] = None # Sẽ được gán tự động
+    user_id: Optional[int] = None
+    role_target: Optional[str] = None
+    related_employee_id: Optional[int] = None
+
+class NotificationCreate(BaseModel): # Dùng để tạo thông báo mới
+    message: str
+    type: str
+    user_id: Optional[int] = None
+    role_target: Optional[str] = None
+    related_employee_id: Optional[int] = None
+
+class Notification(NotificationBase):
+    id: int
+    # Kế thừa created_at từ Base và đảm bảo nó không phải Optional khi đọc
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+# ... (Giữ nguyên code cũ)
+
+class LeaveRequestBase(BaseModel):
+    LeaveType: str
+    StartDate: date
+    EndDate: date
+    Reason: str
+
+class LeaveRequestCreate(LeaveRequestBase):
+    pass
+
+class LeaveRequestUpdate(BaseModel):
+    Status: str
+    ApprovedBy: Optional[str] = None
+
+class LeaveRequest(LeaveRequestBase):
+    RequestID: int
+    EmployeeID: int
+    Status: str
+    model_config = ConfigDict(from_attributes=True)
+
+class AuditLog(BaseModel):
+    id: int
+    user_email: str
+    action: str
+    details: str
+    timestamp: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+class Shareholder(BaseModel):
+    EmployeeID: int
+    FullName: str
+    Shares: int
+    Percentage: float
+    DividendAmount: Decimal
+    Status: str
+    model_config = ConfigDict(from_attributes=True)
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\seed_admin.py
+================================================================================
+# backend/seed_admin.py
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from database import engine_auth, BaseAuth, SessionLocalAuth
+    from models import User
+    # --- SỬA: BỎ IMPORT GET_PASSWORD_HASH ---
+    # from core.security import get_password_hash
+except ImportError as e:
+    print(f"Lỗi import: {e}")
+    sys.exit(1)
+
+ADMIN_FULLNAME = "Admin Dashboard"
+ADMIN_EMAIL = "admin@company.vn"
+ADMIN_PASSWORD = "adminpassword123" # Plain password
+ADMIN_ROLE = "Admin"
+ADMIN_PHONE = "0000000000"
+
+def create_admin_user():
+    print("Đang tạo bảng 'users' trong dashboard_auth.db (nếu chưa có)...")
+    BaseAuth.metadata.create_all(bind=engine_auth)
+    print("Tạo bảng hoàn tất.")
+
+    db = SessionLocalAuth()
+
+    try:
+        existing_admin = db.query(User).filter(User.email == ADMIN_EMAIL).first()
+
+        if existing_admin:
+            print(f"Người dùng với email '{ADMIN_EMAIL}' đã tồn tại. Bỏ qua việc tạo mới.")
+            return
+
+        # --- SỬA: BỎ HASHING ---
+        # hashed_password = get_password_hash(ADMIN_PASSWORD)
+
+        admin_user = User(
+            full_name=ADMIN_FULLNAME,
+            email=ADMIN_EMAIL,
+            phone_number=ADMIN_PHONE,
+            hashed_password=ADMIN_PASSWORD, # <-- SỬA: Lưu mật khẩu gốc
+            role=ADMIN_ROLE,
+            employee_id_link=None
+        )
+
+        db.add(admin_user)
+        db.commit()
+
+        print("\n--- TẠO ADMIN THÀNH CÔNG! (Mật khẩu KHÔNG mã hóa) ---")
+        print(f"  CSDL: dashboard_auth.db")
+        print(f"  Email: {ADMIN_EMAIL}")
+        print(f"  Password: {ADMIN_PASSWORD} (Plain Text)")
+        print("---------------------------------")
+
+    except Exception as e:
+        db.rollback()
+        print(f"Đã xảy ra lỗi: {e}")
+    finally:
+        if db: db.close()
+
+
+if __name__ == "__main__":
+    create_admin_user()
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\api\v1\api.py
+================================================================================
+# backend/api/v1/api.py
+from fastapi import APIRouter
+# --- THÊM notifications ---
+from api.v1.endpoints import (
+    login, employees, departments, positions,
+    payroll, reports, users, notifications
+)
+
+api_router = APIRouter()
+api_router.include_router(login.router, prefix="/login", tags=["Login"])
+api_router.include_router(users.router, prefix="/users", tags=["Users"])
+# --- THÊM DÒNG NÀY ---
+api_router.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
+# --- KẾT THÚC THÊM ---
+api_router.include_router(employees.router, prefix="/employees", tags=["Employees"])
+api_router.include_router(departments.router, prefix="/departments", tags=["Departments"])
+api_router.include_router(positions.router, prefix="/positions", tags=["Positions"])
+api_router.include_router(payroll.router, prefix="/payroll", tags=["Payroll"])
+api_router.include_router(reports.router, prefix="/reports", tags=["Reports"])
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\api\v1\endpoints\departments.py
+================================================================================
+# backend/api/v1/endpoints/departments.py
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from typing import List
+import schemas
+from crud import crud_hr
+from database import get_db_sqlserver, get_db_mysql
+from auth.auth import get_current_active_hr_manager, get_current_active_admin
+
+router = APIRouter()
+
+@router.get("/", response_model=List[schemas.Department])
+def read_departments(db_hr: Session = Depends(get_db_sqlserver), current_user: schemas.User = Depends(get_current_active_hr_manager)):
+    return crud_hr.get_departments(db_hr)
+
+@router.post("/", response_model=schemas.Department, status_code=status.HTTP_201_CREATED)
+def create_department(dept: schemas.DepartmentCreate, db_hr: Session = Depends(get_db_sqlserver), db_payroll: Session = Depends(get_db_mysql), current_user: schemas.User = Depends(get_current_active_admin)):
+    return crud_hr.create_department_synced(db_hr, db_payroll, dept)
+
+@router.put("/{dept_id}", response_model=schemas.Department)
+def update_department(dept_id: int, dept_update: schemas.DepartmentUpdate, db_hr: Session = Depends(get_db_sqlserver), db_payroll: Session = Depends(get_db_mysql), current_user: schemas.User = Depends(get_current_active_admin)):
+    db_dept = crud_hr.update_department_synced(db_hr, db_payroll, dept_id, dept_update)
+    if db_dept is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phòng ban")
+    return db_dept
+
+@router.delete("/{dept_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_department(dept_id: int, db_hr: Session = Depends(get_db_sqlserver), db_payroll: Session = Depends(get_db_mysql), current_user: schemas.User = Depends(get_current_active_admin)):
+    if not crud_hr.delete_department(db_hr, db_payroll, dept_id):
+        raise HTTPException(status_code=400, detail="Không thể xóa phòng ban, vẫn còn nhân viên được gán")
+    return None
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\api\v1\endpoints\employees.py
+================================================================================
+# backend/api/v1/endpoints/employees.py
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from typing import List, Optional
+
+import schemas
+from crud import crud_employee, crud_payroll, crud_user # Thêm crud_user
+# Sửa import: Thêm get_db_auth
+from database import get_db_sqlserver, get_db_mysql, get_db_auth
+from auth.auth import get_current_user, get_current_active_hr_manager, get_current_active_admin
+
+router = APIRouter()
+
+# --- SỬA HÀM NÀY ĐỂ NHẬN THAM SỐ LỌC ---
+@router.get("/", response_model=List[schemas.Employee])
+def read_employees(
+    skip: int = 0,
+    limit: int = 100,
+    search: Optional[str] = None,
+    department_id: Optional[int] = None, # Tham số lọc mới
+    position_id: Optional[int] = None,   # Tham số lọc mới
+    status: Optional[str] = None,        # Tham số lọc mới
+    db_hr: Session = Depends(get_db_sqlserver),
+    db_auth: Session = Depends(get_db_auth),
+    current_user: schemas.User = Depends(get_current_active_hr_manager)
+):
+    """
+    Lấy danh sách nhân viên, hỗ trợ tìm kiếm và lọc theo phòng ban, chức vụ, trạng thái.
+    """
+    employees = crud_employee.get_employees(
+        db_hr=db_hr, 
+        db_auth=db_auth, 
+        skip=skip, 
+        limit=limit, 
+        search=search,
+        department_id=department_id, # Truyền tham số vào CRUD
+        position_id=position_id,     # Truyền tham số vào CRUD
+        status=status                # Truyền tham số vào CRUD
+    )
+    return employees
+# --- KẾT THÚC SỬA ---
+
+
+@router.post("/", response_model=schemas.Employee, status_code=status.HTTP_201_CREATED)
+def create_employee(
+    employee: schemas.EmployeeCreate,
+    db_hr: Session = Depends(get_db_sqlserver),
+    db_payroll: Session = Depends(get_db_mysql),
+    db_auth: Session = Depends(get_db_auth), # <-- THÊM CSDL Auth
+    current_user: schemas.User = Depends(get_current_active_hr_manager)
+):
+    """
+    Thêm nhân viên mới, đồng bộ 3 CSDL.
+    """
+    db_employee = crud_employee.get_employee_by_email(db_hr, email=employee.Email)
+    if db_employee:
+        raise HTTPException(status_code=400, detail="Email nhân viên đã tồn tại trong CSDL HR")
+    
+    # Kiểm tra email trong CSDL Auth luôn cho chắc
+    auth_user = crud_user.get_user_by_email(db_auth, email=employee.Email)
+    if auth_user:
+         raise HTTPException(status_code=400, detail="Email đã tồn tại trong hệ thống tài khoản")
+
+    # Truyền db_auth vào hàm crud
+    return crud_employee.create_employee_synced(db_hr, db_payroll, db_auth, employee)
+
+@router.get("/{employee_id}", response_model=schemas.EmployeeFullProfile)
+def read_employee_profile(
+    employee_id: int,
+    db_hr: Session = Depends(get_db_sqlserver),
+    db_payroll: Session = Depends(get_db_mysql),
+    db_auth: Session = Depends(get_db_auth), # <-- THÊM CSDL Auth
+    current_user: schemas.User = Depends(get_current_user)
+):
+    """
+    Lấy hồ sơ chi tiết của nhân viên từ cả 3 CSDL.
+    """
+    db_employee_hr = crud_employee.get_employee_by_id(db_hr, employee_id)
+    if not db_employee_hr:
+        raise HTTPException(status_code=404, detail="Không tìm thấy nhân viên")
+
+    # Kiểm tra quyền Employee xem của chính mình (đã đúng)
+    if current_user.role == "Employee" and employee_id != current_user.emp_id:
+        raise HTTPException(status_code=403, detail="Không có quyền xem hồ sơ này")
+
+    salaries = crud_payroll.get_salary_history(db_payroll, employee_id)
+    attendances = crud_payroll.get_attendance_data(db_payroll, employee_id)
+
+    # Lấy thông tin role từ Auth DB
+    auth_user = crud_user.get_user_by_email(db_auth, email=db_employee_hr.Email)
+
+    # Chuyển đổi sang schema và thêm thông tin
+    profile_data = schemas.EmployeeFullProfile.from_orm(db_employee_hr)
+    profile_data.salaries = salaries
+    profile_data.attendances = attendances
+    if auth_user:
+        profile_data.role = auth_user.role # Gán vai trò vào profile
+        profile_data.auth_user_id = auth_user.id
+
+    return profile_data
+
+@router.put("/{employee_id}", response_model=schemas.Employee)
+def update_employee(
+    employee_id: int,
+    employee_update: schemas.EmployeeUpdate,
+    db_hr: Session = Depends(get_db_sqlserver),
+    db_payroll: Session = Depends(get_db_mysql),
+    db_auth: Session = Depends(get_db_auth), # <-- THÊM CSDL Auth
+    current_user: schemas.User = Depends(get_current_active_hr_manager)
+):
+    """
+    Cập nhật thông tin nhân viên, đồng bộ 3 CSDL.
+    """
+    # Truyền db_auth vào hàm crud
+    db_employee = crud_employee.update_employee_synced(
+        db_hr, db_payroll, db_auth, employee_id, employee_update
+    )
+    if db_employee is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy nhân viên")
+
+    # Convert lại sang schema Employee để trả về (bao gồm cả role)
+    result_schema = schemas.Employee.from_orm(db_employee)
+    auth_user = crud_user.get_user_by_email(db_auth, email=db_employee.Email)
+    if auth_user:
+        result_schema.role = auth_user.role
+        result_schema.auth_user_id = auth_user.id
+    return result_schema
+
+
+@router.delete("/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_employee(
+    employee_id: int,
+    db_hr: Session = Depends(get_db_sqlserver),
+    db_payroll: Session = Depends(get_db_mysql),
+    db_auth: Session = Depends(get_db_auth), # <-- THÊM CSDL Auth
+    current_user: schemas.User = Depends(get_current_active_admin)
+):
+    """
+    Xóa nhân viên, đồng bộ 3 CSDL (chỉ Admin).
+    """
+    # Truyền db_auth vào hàm crud
+    success = crud_employee.delete_employee_synced(db_hr, db_payroll, db_auth, employee_id)
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Không thể xóa nhân viên do có dữ liệu liên quan (lương hoặc cổ tức)."
+        )
+    return None
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\api\v1\endpoints\login.py
+================================================================================
+# backend/api/v1/endpoints/login.py
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from datetime import timedelta
+
+from database import get_db_auth
+from core.config import settings
+# --- SỬA: BỎ VERIFY_PASSWORD ---
+from core.security import create_access_token # Bỏ verify_password
+from crud import crud_user
+import schemas
+
+router = APIRouter()
+
+@router.post("", response_model=schemas.Token)
+def login_for_access_token(
+    db_auth: Session = Depends(get_db_auth),
+    form_data: OAuth2PasswordRequestForm = Depends()
+):
+    """
+    (REVERTED) Xác thực người dùng bằng mật khẩu thuần.
+    """
+    user = crud_user.get_user_by_email(db_auth, email=form_data.username)
+
+    # --- SỬA: SO SÁNH TRỰC TIẾP ---
+    if not user or user.hashed_password != form_data.password:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Create access token (remains the same)
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={
+            "sub": user.email,
+            "role": user.role,
+            "emp_id": user.employee_id_link
+        },
+        expires_delta=access_token_expires
+    )
+
+    return {"access_token": access_token, "token_type": "bearer"}
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\api\v1\endpoints\notifications.py
+================================================================================
+# backend/api/v1/endpoints/notifications.py
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from typing import List
+
+import schemas
+from crud import crud_notification
+from database import get_db_auth
+from auth.auth import get_current_user # Cần user hiện tại
+
+router = APIRouter()
+
+@router.get("/", response_model=List[schemas.Notification])
+def read_notifications_for_current_user(
+    skip: int = 0,
+    limit: int = 10, # Giới hạn số lượng trả về ban đầu
+    include_read: bool = False, # Mặc định chỉ lấy chưa đọc
+    db_auth: Session = Depends(get_db_auth),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    """Lấy danh sách thông báo cho người dùng đang đăng nhập."""
+    notifications = crud_notification.get_notifications_for_user(
+        db_auth, current_user=current_user, skip=skip, limit=limit, include_read=include_read
+    )
+    return notifications
+
+@router.get("/unread-count", response_model=int)
+def get_unread_count(
+    db_auth: Session = Depends(get_db_auth),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    """Lấy số lượng thông báo chưa đọc."""
+    count = crud_notification.get_unread_notification_count(db_auth, current_user)
+    return count
+
+
+@router.put("/{notification_id}/read", response_model=schemas.Notification)
+def mark_notification_as_read(
+    notification_id: int,
+    db_auth: Session = Depends(get_db_auth),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    """Đánh dấu một thông báo cụ thể là đã đọc."""
+    result = crud_notification.mark_notification_as_read(db_auth, notification_id, current_user)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    if result == "Forbidden":
+         raise HTTPException(status_code=403, detail="Not authorized to read this notification")
+    return result
+
+@router.put("/read-all", status_code=status.HTTP_200_OK)
+def mark_all_user_notifications_as_read(
+    db_auth: Session = Depends(get_db_auth),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    """Đánh dấu tất cả thông báo chưa đọc của user là đã đọc."""
+    result = crud_notification.mark_all_notifications_as_read(db_auth, current_user)
+    return result
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\api\v1\endpoints\payroll.py
+================================================================================
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import List
+
+import schemas
+from crud import crud_payroll
+from database import get_db_mysql
+from auth.auth import get_current_user, get_current_active_payroll_manager, get_current_active_admin
+
+router = APIRouter()
+
+@router.get("/{employee_id}/salaries", response_model=List[schemas.Salary])
+def get_employee_salaries(
+    employee_id: int,
+    db_payroll: Session = Depends(get_db_mysql),
+    current_user: schemas.User = Depends(get_current_user) # Cho phép người dùng đã đăng nhập xem
+):
+    """Xem lịch sử lương từ PAYROLL"""
+    salaries = crud_payroll.get_salary_history(db_payroll, employee_id)
+    return salaries
+
+@router.get("/{employee_id}/attendance", response_model=List[schemas.Attendance])
+def get_employee_attendance(
+    employee_id: int,
+    db_payroll: Session = Depends(get_db_mysql),
+    current_user: schemas.User = Depends(get_current_user) # Cho phép người dùng đã đăng nhập xem
+):
+    """Xem lịch sử chấm công từ PAYROLL"""
+    attendance = crud_payroll.get_attendance_data(db_payroll, employee_id)
+    return attendance
+
+# --- ENDPOINT MỚI ---
+@router.put("/salaries/{salary_id}", response_model=schemas.Salary)
+def update_salary_record(
+    salary_id: int,
+    salary_update: schemas.SalaryUpdate,
+    db_payroll: Session = Depends(get_db_mysql),
+    # Phân quyền: Chỉ Payroll Manager hoặc Admin được sửa
+    current_user: schemas.User = Depends(get_current_active_payroll_manager)
+):
+    """Cập nhật một bản ghi lương (Bonus, Deductions, BaseSalary)"""
+    db_salary = crud_payroll.update_salary(db_payroll, salary_id, salary_update)
+    if db_salary is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy bản ghi lương")
+    return db_salary
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\api\v1\endpoints\positions.py
+================================================================================
+# backend/api/v1/endpoints/positions.py
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from typing import List
+import schemas
+from crud import crud_hr
+from database import get_db_sqlserver, get_db_mysql
+from auth.auth import get_current_active_hr_manager, get_current_active_admin
+
+router = APIRouter()
+
+@router.get("/", response_model=List[schemas.Position])
+def read_positions(db_hr: Session = Depends(get_db_sqlserver), current_user: schemas.User = Depends(get_current_active_hr_manager)):
+    return crud_hr.get_positions(db_hr)
+
+@router.post("/", response_model=schemas.Position, status_code=status.HTTP_201_CREATED)
+def create_position(pos: schemas.PositionCreate, db_hr: Session = Depends(get_db_sqlserver), db_payroll: Session = Depends(get_db_mysql), current_user: schemas.User = Depends(get_current_active_admin)):
+    return crud_hr.create_position_synced(db_hr, db_payroll, pos)
+
+@router.put("/{pos_id}", response_model=schemas.Position)
+def update_position(pos_id: int, pos_update: schemas.PositionUpdate, db_hr: Session = Depends(get_db_sqlserver), db_payroll: Session = Depends(get_db_mysql), current_user: schemas.User = Depends(get_current_active_admin)):
+    db_pos = crud_hr.update_position_synced(db_hr, db_payroll, pos_id, pos_update)
+    if db_pos is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy chức vụ")
+    return db_pos
+
+@router.delete("/{pos_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_position(pos_id: int, db_hr: Session = Depends(get_db_sqlserver), db_payroll: Session = Depends(get_db_mysql), current_user: schemas.User = Depends(get_current_active_admin)):
+    if not crud_hr.delete_position(db_hr, db_payroll, pos_id):
+        raise HTTPException(status_code=400, detail="Không thể xóa chức vụ, vẫn còn nhân viên được gán")
+    return None
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\api\v1\endpoints\reports.py
+================================================================================
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from database import get_db_sqlserver, get_db_mysql
+from auth.auth import get_current_user
+import models
+import schemas
+import logging
+
+# Thiết lập logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+@router.get("/hr_summary")
+def get_hr_report(
+    db_hr: Session = Depends(get_db_sqlserver),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    """
+    Báo cáo nhân sự từ database HUMAN_2025.
+    """
+    try:
+        total_employees = db_hr.query(models.EmployeeHR).count()
+
+        # Tạo query để lấy số lượng nhân viên theo phòng ban
+        distribution_query = db_hr.query(
+            models.DepartmentHR.DepartmentName,
+            func.count(models.EmployeeHR.EmployeeID)
+        ).join(
+            models.EmployeeHR, models.EmployeeHR.DepartmentID == models.DepartmentHR.DepartmentID
+        ).group_by(models.DepartmentHR.DepartmentName)
+
+        # Duyệt qua kết quả để tránh lỗi SQLGetData với một số driver
+        distribution_data = {}
+        for name, count in distribution_query:
+            distribution_data[name] = count
+
+    except Exception as e:
+        logger.error(f"Error getting HR report: {e}")
+        raise HTTPException(status_code=500, detail="Could not fetch HR report data.")
+
+    return {
+        "total_employees": total_employees,
+        "distribution_by_dept": distribution_data
+    }
+
+@router.get("/payroll_summary")
+def get_payroll_report(
+    db_payroll: Session = Depends(get_db_mysql),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    """
+    Báo cáo lương từ database PAYROLL.
+    """
+    try:
+        total_budget = db_payroll.query(func.sum(models.Salary.NetSalary)).scalar()
+
+        # Query để lấy lương trung bình theo phòng ban
+        avg_salary_query = db_payroll.query(
+            models.DepartmentPayroll.DepartmentName,
+            func.avg(models.Salary.NetSalary)
+        ).join(
+            models.EmployeePayroll, models.Salary.EmployeeID == models.EmployeePayroll.EmployeeID
+        ).join(
+            models.DepartmentPayroll, models.EmployeePayroll.DepartmentID == models.DepartmentPayroll.DepartmentID
+        ).group_by(models.DepartmentPayroll.DepartmentName)
+
+        # Duyệt qua kết quả và chuyển đổi Decimal sang float
+        avg_salary_data = {}
+        for name, avg in avg_salary_query:
+            avg_salary_data[name] = float(avg) if avg is not None else 0.0
+            
+    except Exception as e:
+        logger.error(f"Error getting Payroll report: {e}")
+        raise HTTPException(status_code=500, detail="Could not fetch Payroll report data.")
+
+    return {
+        "total_salary_budget": float(total_budget) if total_budget is not None else 0.0,
+        "avg_salary_by_dept": avg_salary_data
+    }
+
+@router.get("/dividend_summary")
+def get_dividend_report(
+    db_hr: Session = Depends(get_db_sqlserver),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    """
+    Báo cáo cổ tức từ database HUMAN_2025.
+    """
+    try:
+        total_dividends = db_hr.query(func.sum(models.Dividend.DividendAmount)).scalar()
+        employee_shareholders = db_hr.query(models.Dividend.EmployeeID).distinct().count()
+
+    except Exception as e:
+        logger.error(f"Error getting Dividend report: {e}")
+        raise HTTPException(status_code=500, detail="Could not fetch Dividend report data.")
+
+    return {
+        "total_dividend_amount": float(total_dividends) if total_dividends is not None else 0.0,
+        "employee_shareholders": employee_shareholders
+    }
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\api\v1\endpoints\users.py
+================================================================================
+# backend/api/v1/endpoints/users.py
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from typing import List, Optional # <-- Import Optional
+import schemas
+from crud import crud_user
+from database import get_db_auth
+from auth.auth import get_current_active_admin, get_current_user
+
+router = APIRouter()
+
+# --- SỬA HÀM NÀY ĐỂ NHẬN THAM SỐ LỌC/TÌM KIẾM ---
+@router.get("/", response_model=List[schemas.UserInDB])
+def read_users(
+    skip: int = 0,
+    limit: int = 100,
+    search: Optional[str] = None, # Tham số tìm kiếm từ query URL
+    role: Optional[str] = None,   # Tham số lọc vai trò từ query URL
+    db_auth: Session = Depends(get_db_auth),
+    current_user: schemas.User = Depends(get_current_active_admin) # Chỉ Admin
+):
+    """
+    Lấy danh sách tài khoản từ CSDL Auth (dashboard_auth.db),
+    hỗ trợ tìm kiếm và lọc.
+    """
+    users = crud_user.get_users(
+        db_auth,
+        skip=skip,
+        limit=limit,
+        search=search, # Truyền vào CRUD
+        role=role      # Truyền vào CRUD
+    )
+    return users
+# --- KẾT THÚC SỬA ---
+
+@router.post("/", response_model=schemas.UserInDB, status_code=status.HTTP_201_CREATED)
+def create_new_user_manual(
+    # ... (giữ nguyên)
+    user: schemas.UserCreate,
+    db_auth: Session = Depends(get_db_auth),
+    current_user: schemas.User = Depends(get_current_active_admin)
+):
+    # ... (giữ nguyên)
+    db_user = crud_user.get_user_by_email(db_auth, email=user.email)
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email đã tồn tại")
+    return crud_user.create_user(db_auth, user)
+
+@router.put("/{user_id}/role", response_model=schemas.UserInDB)
+def update_user_role_endpoint(
+    # ... (giữ nguyên)
+    user_id: int,
+    role_update: schemas.UserRoleUpdate,
+    db_auth: Session = Depends(get_db_auth),
+    current_user: schemas.User = Depends(get_current_active_admin)
+):
+    # ... (giữ nguyên logic kiểm tra self-update)
+    if not hasattr(current_user, 'id'):
+         active_admin_user = crud_user.get_user_by_email(db_auth, current_user.email)
+         if not active_admin_user:
+              raise HTTPException(status_code=403, detail="Could not verify admin identity.")
+         current_admin_id = active_admin_user.id
+    else:
+         current_admin_id = current_user.id
+
+    if current_admin_id == user_id:
+         raise HTTPException(status_code=400, detail="Admin cannot change their own role.")
+
+    db_user = crud_user.update_user_role(db_auth, user_id, role_update.role)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return db_user
+
+@router.put("/{user_id}/password", status_code=status.HTTP_204_NO_CONTENT)
+def reset_user_password_endpoint(
+    # ... (giữ nguyên)
+    user_id: int,
+    password_update: schemas.UserPasswordUpdate,
+    db_auth: Session = Depends(get_db_auth),
+    current_user: schemas.User = Depends(get_current_active_admin)
+):
+    # ... (giữ nguyên)
+    db_user = crud_user.update_user_password(db_auth, user_id, password_update.new_password)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return None
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\auth\auth.py
+================================================================================
+# backend/auth/auth.py
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from sqlalchemy.orm import Session
+from pydantic import ValidationError
+from typing import TYPE_CHECKING, Optional
+
+from core.config import settings
+from database import get_db_auth
+from models import User as AuthUser
+import schemas
+from crud import crud_user
+
+if TYPE_CHECKING:
+    from models import EmployeeHR
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/login")
+
+# --- Logic phân quyền (Giữ nguyên) ---
+def get_user_role(db_user: 'EmployeeHR') -> str:
+    if not db_user:
+        return "Employee"
+    if db_user.PositionID == 5: # Giám đốc
+        return "Admin"
+    elif db_user.DepartmentID == 1: # Nhân sự
+        return "HR Manager"
+    elif db_user.DepartmentID == 2: # Kế toán
+        return "Payroll Manager"
+    else:
+        return "Employee"
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db_auth)
+) -> schemas.User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
+        email: str = payload.get("sub")
+        role: str = payload.get("role")
+        emp_id: Optional[int] = payload.get("emp_id")
+
+        user_in_db = crud_user.get_user_by_email(db, email=email)
+        if not user_in_db:
+             raise credentials_exception
+        user_id = user_in_db.id
+
+        if email is None or role is None:
+            raise credentials_exception
+
+        token_data = schemas.TokenData(email=email, role=role, emp_id=emp_id)
+
+    except (JWTError, ValidationError):
+        raise credentials_exception
+
+    # Lấy lại user từ DB để đảm bảo user vẫn tồn tại
+    user = crud_user.get_user_by_email(db, email=token_data.email)
+    if user is None:
+        raise credentials_exception
+
+    return schemas.User(id=user.id, email=user.email, role=token_data.role, emp_id=token_data.emp_id)
+
+
+# --- Dependency phân quyền ---
+def get_current_active_admin(current_user: schemas.User = Depends(get_current_user)):
+    if current_user.role != "Admin":
+        raise HTTPException(status_code=403, detail="Not authorized: Admins only")
+    return current_user
+
+# --- SỬA HÀM NÀY ---
+def get_current_active_hr_manager(current_user: schemas.User = Depends(get_current_user)):
+    # CHO PHÉP CẢ Payroll Manager TRUY CẬP CÁC ENDPOINT DÙNG DEPENDENCY NÀY
+    allowed_roles = ["Admin", "HR Manager", "Payroll Manager"]
+    if current_user.role not in allowed_roles:
+        raise HTTPException(status_code=403, detail="Not authorized: HR, Payroll, or Admins only") # Cập nhật thông báo lỗi
+    return current_user
+# --- KẾT THÚC SỬA ---
+
+# --- SỬA HÀM NÀY (Đã bao gồm trong thay đổi ở trên, nhưng để rõ ràng) ---
+def get_current_active_payroll_manager(current_user: schemas.User = Depends(get_current_user)):
+    # Dependency này vẫn giữ nguyên, chỉ cho Admin và Payroll Manager
+    if current_user.role not in ["Admin", "Payroll Manager"]:
+        raise HTTPException(status_code=403, detail="Not authorized: Payroll or Admins only")
+    return current_user
+# --- KẾT THÚC SỬA ---
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\core\config.py
+================================================================================
+# backend/core/config.py
+import os
+from dotenv import load_dotenv
+from sqlalchemy import create_engine # Đã chuyển import create_engine về đây
+
+load_dotenv()
+
+class Settings:
+    # SQL Server (CSDL Cũ 1)
+    SQL_SERVER_DRIVER = os.getenv("SQL_SERVER_DRIVER", "ODBC Driver 17 for SQL Server")
+    SQL_SERVER_SERVER = os.getenv("SQL_SERVER_SERVER", "(LocalDB)\\MSSQLLocalDB")
+    SQL_SERVER_DATABASE = os.getenv("SQL_SERVER_DATABASE", "HUMAN_2025")
+    SQL_SERVER_USER = os.getenv("SQL_SERVER_USER")
+    SQL_SERVER_PASSWORD = os.getenv("SQL_SERVER_PASSWORD")
+
+    _driver_formatted = SQL_SERVER_DRIVER.replace(' ', '+')
+
+    if SQL_SERVER_USER:
+        SQLALCHEMY_DATABASE_URI_SQLSERVER = (
+            f"mssql+pyodbc://{SQL_SERVER_USER}:{SQL_SERVER_PASSWORD}@"
+            f"{SQL_SERVER_SERVER}/{SQL_SERVER_DATABASE}?"
+            f"driver={_driver_formatted}&charset=utf8&MARS_Connection=yes"
+        )
+    else:
+        SQLALCHEMY_DATABASE_URI_SQLSERVER = (
+            f"mssql+pyodbc://{SQL_SERVER_SERVER}/{SQL_SERVER_DATABASE}?"
+            f"driver={_driver_formatted}&Trusted_Connection=yes&charset=utf8&MARS_Connection=yes"
+        )
+
+    # MySQL (CSDL Cũ 2) - KIỂM TRA LẠI PHẦN NÀY
+    MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
+    MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "payroll")
+    MYSQL_USER = os.getenv("MYSQL_USER", "root")
+    MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "") # Đảm bảo đọc đúng biến
+
+    SQLALCHEMY_DATABASE_URI_MYSQL = (
+        f"mysql+mysqlconnector://{MYSQL_USER}:{MYSQL_PASSWORD}@"
+        f"{MYSQL_HOST}/{MYSQL_DATABASE}?charset=utf8mb4"
+    )
+    # KẾT THÚC KIỂM TRA MYSQL
+
+    # CSDL mới cho Dashboard Auth (SQLite)
+    DASHBOARD_DB_URL = os.getenv("DASHBOARD_DB_URL", "sqlite:///./dashboard_auth.db")
+
+    # JWT Settings
+    SECRET_KEY = os.getenv("SECRET_KEY", "a_very_secret_key_that_is_long_and_secure")
+    ALGORITHM = os.getenv("ALGORITHM", "HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60))
+
+settings = Settings()
+
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\core\security.py
+================================================================================
+# backend/core/security.py
+from datetime import datetime, timedelta
+from typing import Optional
+
+from jose import jwt
+# --- SỬA: BỎ PASSLIB ---
+# from passlib.context import CryptContext 
+
+from core.config import settings
+
+# --- SỬA: BỎ PWD_CONTEXT ---
+# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def verify_password(plain_password: str, stored_password: str) -> bool:
+    """
+    (REVERTED) So sánh mật khẩu thuần.
+    """
+    return plain_password == stored_password # <-- SỬA: So sánh trực tiếp
+
+
+def get_password_hash(password: str) -> str:
+    """
+    (REVERTED) Trả về mật khẩu thuần.
+    """
+    return password # <-- SỬA: Trả về mật khẩu gốc
+
+# --- create_access_token function remains the same ---
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    """
+    Create a new JWT access token.
+    """
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return encoded_jwt
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\crud\crud_employee.py
+================================================================================
+# backend/crud/crud_employee.py
+from fastapi import HTTPException
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_
+from models import (
+    EmployeeHR, EmployeePayroll, DepartmentPayroll, PositionPayroll,
+    DepartmentHR, PositionHR, Salary, Attendance, Dividend,
+    User as AuthUser
+)
+import schemas
+from auth.auth import get_user_role as get_role_from_hr
+from . import crud_user
+from core.security import get_password_hash
+from typing import Optional
+
+def get_employee_by_id(db_hr: Session, employee_id: int):
+    """Lấy thông tin một nhân viên theo ID từ CSDL HR."""
+    return db_hr.query(EmployeeHR).filter(EmployeeHR.EmployeeID == employee_id).first()
+
+def get_employee_by_email(db_hr: Session, email: str):
+    """Lấy thông tin một nhân viên theo email, join sẵn phòng ban và chức vụ."""
+    return db_hr.query(EmployeeHR).options(
+        joinedload(EmployeeHR.department),
+        joinedload(EmployeeHR.position)
+    ).filter(EmployeeHR.Email == email).first()
+
+# --- HÀM ĐÃ SỬA ĐỂ FIX LỖI PYODBC ---
+def get_employees(
+    db_hr: Session,
+    db_auth: Session,
+    skip: int = 0,
+    limit: int = 100,
+    search: Optional[str] = None,
+    department_id: Optional[int] = None,
+    position_id: Optional[int] = None,
+    status: Optional[str] = None):
+    """
+    Lấy danh sách nhân viên HR, eager load, hỗ trợ tìm kiếm/lọc,
+    và tối ưu hóa join với CSDL Auth, xử lý lỗi pyodbc.
+    """
+    # 1. Build query for HR DB (SQL Server)
+    query = db_hr.query(EmployeeHR).options(
+        joinedload(EmployeeHR.department),
+        joinedload(EmployeeHR.position)
+    )
+
+    if department_id:
+        query = query.filter(EmployeeHR.DepartmentID == department_id)
+    if position_id:
+        query = query.filter(EmployeeHR.PositionID == position_id)
+    if status:
+        query = query.filter(EmployeeHR.Status == status)
+
+    if search:
+        search_term_like = f"%{search}%"
+        # Cần join ở đây để lọc theo tên Department/Position
+        query = query.outerjoin(DepartmentHR).outerjoin(PositionHR) 
+        search_filters = [
+            EmployeeHR.FullName.ilike(search_term_like),
+            EmployeeHR.Email.ilike(search_term_like),
+            DepartmentHR.DepartmentName.ilike(search_term_like),
+            PositionHR.PositionName.ilike(search_term_like)
+        ]
+        try:
+            search_id = int(search)
+            search_filters.append(EmployeeHR.EmployeeID == search_id)
+        except ValueError:
+            pass
+        query = query.filter(or_(*search_filters))
+
+    # Apply ordering, skip, limit
+    query = query.order_by(EmployeeHR.EmployeeID).offset(skip).limit(limit)
+
+    # 2. Execute HR query and *immediately* fetch all results into a list
+    # Đây là bước quan trọng để fix lỗi pyodbc
+    try:
+        # Sử dụng .all() để trả về một list
+        hr_employees = query.all()
+    except Exception as e:
+        # Log lỗi cụ thể khi fetch từ SQL Server
+        print(f"ERROR fetching from SQL Server in get_employees: {e}")
+        # Báo lỗi HTTPException để FastAPI xử lý
+        raise HTTPException(status_code=500, detail=f"Database error fetching employee list: {e}")
+
+    # 3. Lấy emails để truy vấn CSDL Auth
+    emails = [emp.Email for emp in hr_employees if emp.Email]
+    auth_map = {} # Khởi tạo map rỗng
+
+    if emails:
+        # 4. Truy vấn CSDL Auth (SQLite) riêng biệt
+        try:
+            # Lấy tất cả user khớp trong 1 lần query
+            auth_users_list = db_auth.query(AuthUser).filter(AuthUser.email.in_(emails)).all()
+            # Tạo một lookup map
+            auth_map = {user.email: user for user in auth_users_list}
+        except Exception as e:
+            # Log lỗi khi fetch từ Auth DB nhưng có thể tiếp tục
+            print(f"WARNING fetching from Auth DB in get_employees: {e}")
+            # Tùy yêu cầu, bạn có thể raise HTTPException ở đây
+
+    # 5. Kết hợp kết quả trong Python
+    results = []
+    for emp_hr in hr_employees:
+        # Chuyển đổi HR employee sang Pydantic schema
+        # Sẽ không lỗi lazy loading vì đã dùng joinedload
+        try:
+            emp_schema = schemas.Employee.from_orm(emp_hr)
+        except Exception as e:
+             print(f"ERROR converting EmployeeHR (ID: {emp_hr.EmployeeID}) to schema: {e}")
+             # Bỏ qua nhân viên này hoặc xử lý lỗi
+             continue
+
+        # Tra cứu thông tin Auth user từ map
+        auth_user = auth_map.get(emp_hr.Email)
+        if auth_user:
+            emp_schema.role = auth_user.role
+            emp_schema.auth_user_id = auth_user.id
+        
+        results.append(emp_schema)
+
+    return results
+# --- KẾT THÚC HÀM SỬA ---
+
+
+def create_employee_synced(db_hr: Session, db_payroll: Session, db_auth: Session, employee: schemas.EmployeeCreate):
+    """Thêm nhân viên mới, đồng bộ sang PAYROLL và CSDL AUTH, xử lý giao dịch an toàn."""
+
+    # 1. Tạo trong HR DB
+    employee_data = employee.dict(exclude={"password"})
+    db_employee_hr = EmployeeHR(**employee_data)
+    db_hr.add(db_employee_hr)
+    try:
+        db_hr.commit()
+        db_hr.refresh(db_employee_hr)
+    except Exception as e:
+        db_hr.rollback()
+        raise HTTPException(status_code=400, detail=f"Lỗi khi tạo nhân viên trong HR DB: {e}")
+
+    # 2. Đồng bộ sang Payroll DB
+    db_employee_payroll = None
+    try:
+        # Đồng bộ Department và Position nếu chưa tồn tại
+        dept_hr = db_hr.get(DepartmentHR, db_employee_hr.DepartmentID)
+        if dept_hr and not db_payroll.get(DepartmentPayroll, dept_hr.DepartmentID):
+            db_payroll.add(DepartmentPayroll(DepartmentID=dept_hr.DepartmentID, DepartmentName=dept_hr.DepartmentName))
+
+        pos_hr = db_hr.get(PositionHR, db_employee_hr.PositionID)
+        if pos_hr and not db_payroll.get(PositionPayroll, pos_hr.PositionID):
+            db_payroll.add(PositionPayroll(PositionID=pos_hr.PositionID, PositionName=pos_hr.PositionName))
+
+        db_employee_payroll = EmployeePayroll(
+            EmployeeID=db_employee_hr.EmployeeID,
+            FullName=db_employee_hr.FullName,
+            DepartmentID=db_employee_hr.DepartmentID,
+            PositionID=db_employee_hr.PositionID,
+            Status=db_employee_hr.Status
+        )
+        db_payroll.add(db_employee_payroll)
+        db_payroll.commit()
+    except Exception as e_payroll:
+        # Nếu Payroll lỗi, hoàn tác HR
+        db_hr.delete(db_employee_hr)
+        db_hr.commit()
+        db_payroll.rollback()
+        raise HTTPException(status_code=500, detail=f"Lỗi khi đồng bộ nhân viên sang Payroll DB: {e_payroll}. Thao tác đã được hoàn tác.")
+
+    # 3. Đồng bộ sang Auth DB
+    try:
+        # SỬA: Cần lấy lại db_employee_hr với joinload để get_role_from_hr hoạt động
+        db_employee_hr_joined = db_hr.query(EmployeeHR).options(
+            joinedload(EmployeeHR.department),
+            joinedload(EmployeeHR.position)
+        ).filter(EmployeeHR.EmployeeID == db_employee_hr.EmployeeID).first()
+
+        role = get_role_from_hr(db_employee_hr_joined) # Dùng bản đã join
+        auth_user_in = schemas.UserCreate(
+            full_name=employee.FullName,
+            email=employee.Email,
+            password=employee.password, # crud_user.create_user sẽ tự động băm
+            role=role,
+            phone_number=employee.PhoneNumber,
+            employee_id_link=db_employee_hr.EmployeeID
+        )
+        # Dùng hàm create_user đã có sẵn logic băm mật khẩu
+        crud_user.create_user(db_auth, auth_user_in)
+    except Exception as e_auth:
+        # Nếu Auth lỗi, hoàn tác cả HR và Payroll
+        db_hr.delete(db_employee_hr)
+        db_hr.commit()
+
+        if db_employee_payroll:
+            # Query lại employee payroll để xóa (nếu đã commit thành công)
+            emp_payroll_to_delete = db_payroll.get(EmployeePayroll, db_employee_payroll.EmployeeID)
+            if emp_payroll_to_delete:
+                db_payroll.delete(emp_payroll_to_delete)
+                db_payroll.commit()
+
+        raise HTTPException(status_code=500, detail=f"Lỗi đồng bộ nhân viên sang Auth DB: {e_auth}. Mọi thao tác đã được hoàn tác.")
+
+    # Trả về bản đã join
+    return db_employee_hr_joined
+
+def update_employee_synced(db_hr: Session, db_payroll: Session, db_auth: Session, employee_id: int, employee_update: schemas.EmployeeUpdate):
+    """Cập nhật nhân viên, đồng bộ sang PAYROLL và AUTH."""
+
+    # 1. Cập nhật HR DB
+    # SỬA: Query có joinedload
+    db_employee_hr = db_hr.query(EmployeeHR).options(
+        joinedload(EmployeeHR.department),
+        joinedload(EmployeeHR.position)
+    ).filter(EmployeeHR.EmployeeID == employee_id).first()
+
+    if not db_employee_hr:
+        return None
+
+    update_data = employee_update.dict(exclude_unset=True)
+    payroll_sync_needed = any(key in ["DepartmentID", "PositionID", "Status", "FullName"] for key in update_data)
+
+    for key, value in update_data.items():
+        setattr(db_employee_hr, key, value)
+    db_hr.add(db_employee_hr)
+    try:
+        db_hr.commit()
+        # Refresh là quan trọng để cập nhật relationships nếu chúng thay đổi
+        db_hr.refresh(db_employee_hr, attribute_names=['department', 'position'])
+    except Exception as e:
+        db_hr.rollback()
+        raise HTTPException(status_code=400, detail=f"Lỗi khi cập nhật nhân viên trong HR DB: {e}")
+
+    # 2. Đồng bộ Payroll DB (Không làm gián đoạn nếu lỗi)
+    if payroll_sync_needed:
+        db_employee_payroll = db_payroll.query(EmployeePayroll).filter(EmployeePayroll.EmployeeID == employee_id).first()
+        if db_employee_payroll:
+            try:
+                for key in ["DepartmentID", "PositionID", "Status", "FullName"]:
+                    if key in update_data:
+                        setattr(db_employee_payroll, key, update_data[key])
+                db_payroll.add(db_employee_payroll)
+                db_payroll.commit()
+            except Exception as e:
+                db_payroll.rollback()
+                print(f"CẢNH BÁO: Lỗi đồng bộ cập nhật sang Payroll DB: {e}. Dữ liệu HR đã được cập nhật.")
+
+    # 3. Đồng bộ Auth DB (Không làm gián đoạn nếu lỗi)
+    auth_user = db_auth.query(AuthUser).filter(AuthUser.employee_id_link == employee_id).first()
+    if auth_user:
+        try:
+            # Cập nhật các trường có thể thay đổi
+            if 'FullName' in update_data:
+                auth_user.full_name = update_data['FullName']
+            if 'PhoneNumber' in update_data:
+                auth_user.phone_number = update_data['PhoneNumber']
+
+            # Cập nhật vai trò nếu phòng ban/chức vụ thay đổi
+            if "DepartmentID" in update_data or "PositionID" in update_data:
+                # db_employee_hr đã được refresh sau khi commit HR
+                auth_user.role = get_role_from_hr(db_employee_hr)
+
+            db_auth.add(auth_user)
+            db_auth.commit()
+        except Exception as e:
+            db_auth.rollback()
+            print(f"CẢNH BÁO: Lỗi đồng bộ cập nhật sang Auth DB: {e}.")
+
+    return db_employee_hr
+
+def delete_employee_synced(db_hr: Session, db_payroll: Session, db_auth: Session, employee_id: int):
+    """Xóa nhân viên ở cả 3 CSDL, có kiểm tra ràng buộc dữ liệu."""
+
+    # 1. Kiểm tra ràng buộc dữ liệu quan trọng
+    has_dividends = db_hr.query(Dividend).filter(Dividend.EmployeeID == employee_id).first()
+    has_salaries = db_payroll.query(Salary).filter(Salary.EmployeeID == employee_id).first()
+    if has_dividends or has_salaries:
+        # Nếu có lương hoặc cổ tức, không cho phép xóa
+        return False
+
+    # 2. Xóa khỏi CSDL Auth (Nếu lỗi sẽ dừng)
+    auth_user = db_auth.query(AuthUser).filter(AuthUser.employee_id_link == employee_id).first()
+    if auth_user:
+        try:
+            db_auth.delete(auth_user)
+            db_auth.commit()
+        except Exception as e:
+            db_auth.rollback()
+            raise HTTPException(status_code=500, detail=f"Lỗi khi xóa nhân viên từ Auth DB: {e}")
+
+    # 3. Xóa khỏi CSDL Payroll (Xóa dữ liệu phụ thuộc trước)
+    try:
+        # Xóa các bản ghi chấm công liên quan
+        db_payroll.query(Attendance).filter(Attendance.EmployeeID == employee_id).delete(synchronize_session=False)
+        # Xóa bản ghi nhân viên
+        db_payroll.query(EmployeePayroll).filter(EmployeePayroll.EmployeeID == employee_id).delete(synchronize_session=False)
+        db_payroll.commit()
+    except Exception as e:
+        db_payroll.rollback()
+        raise HTTPException(status_code=500, detail=f"Lỗi khi xóa nhân viên từ Payroll DB: {e}")
+
+    # 4. Xóa khỏi CSDL HR (Xóa cuối cùng)
+    db_employee_hr = get_employee_by_id(db_hr, employee_id)
+    if db_employee_hr:
+        try:
+            db_hr.delete(db_employee_hr)
+            db_hr.commit()
+        except Exception as e:
+            db_hr.rollback()
+            # Nếu đến bước này mà lỗi (ví dụ do ràng buộc khóa ngoại chưa xử lý),
+            # Giao dịch Auth và Payroll vẫn thành công, nhưng cần báo lỗi
+            raise HTTPException(status_code=500, detail=f"Lỗi khi xóa nhân viên từ HR DB: {e}")
+
+    return True
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\crud\crud_hr.py
+================================================================================
+# backend/crud/crud_hr.py
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+from models import DepartmentHR, PositionHR, EmployeeHR, DepartmentPayroll, PositionPayroll
+import schemas
+
+# --- Logic CRUD cho Department ---
+def get_departments(db_hr: Session):
+    try:
+        query = db_hr.query(DepartmentHR).order_by(DepartmentHR.DepartmentID)
+        # SỬA: Duyệt qua kết quả để tránh lỗi SQLGetData/Sequence Error
+        results = list(query.all()) 
+        return results
+    except Exception as e:
+        print(f"Lỗi khi lấy danh sách phòng ban: {e}")
+        # Trả về lỗi thay vì list rỗng để frontend biết
+        raise HTTPException(status_code=500, detail=f"Lỗi khi truy vấn phòng ban: {e}")
+
+def create_department_synced(db_hr: Session, db_payroll: Session, dept: schemas.DepartmentCreate):
+    db_dept_hr = DepartmentHR(DepartmentName=dept.DepartmentName)
+    db_hr.add(db_dept_hr)
+    try:
+        db_hr.commit(); db_hr.refresh(db_dept_hr)
+    except Exception as e:
+        db_hr.rollback(); raise HTTPException(status_code=400, detail=f"Lỗi khi tạo phòng ban trong HR DB: {e}")
+    
+    db_dept_payroll = DepartmentPayroll(DepartmentID=db_dept_hr.DepartmentID, DepartmentName=db_dept_hr.DepartmentName)
+    db_payroll.add(db_dept_payroll)
+    try:
+        db_payroll.commit()
+    except Exception as e:
+        db_payroll.rollback(); db_hr.delete(db_dept_hr); db_hr.commit()
+        raise HTTPException(status_code=500, detail=f"Lỗi đồng bộ phòng ban sang Payroll DB: {e}")
+    return db_dept_hr
+
+def update_department_synced(db_hr: Session, db_payroll: Session, dept_id: int, dept_update: schemas.DepartmentUpdate):
+    db_dept_hr = db_hr.get(DepartmentHR, dept_id)
+    if not db_dept_hr: return None
+
+    update_data = dept_update.dict(exclude_unset=True)
+    for key, value in update_data.items(): setattr(db_dept_hr, key, value)
+    
+    db_hr.add(db_dept_hr)
+    try:
+        db_hr.commit(); db_hr.refresh(db_dept_hr)
+    except Exception as e:
+        db_hr.rollback(); raise HTTPException(status_code=400, detail=f"Lỗi khi cập nhật phòng ban HR DB: {e}")
+
+    db_dept_payroll = db_payroll.get(DepartmentPayroll, dept_id)
+    if db_dept_payroll and 'DepartmentName' in update_data:
+        db_dept_payroll.DepartmentName = update_data['DepartmentName']
+        db_payroll.add(db_dept_payroll)
+        try:
+            db_payroll.commit()
+        except Exception as e:
+            db_payroll.rollback(); print(f"CẢNH BÁO: Lỗi đồng bộ cập nhật phòng ban sang Payroll: {e}")
+    return db_dept_hr
+
+def delete_department(db_hr: Session, db_payroll: Session, dept_id: int):
+    if db_hr.query(EmployeeHR).filter(EmployeeHR.DepartmentID == dept_id).first(): return False
+    
+    payroll_dept = db_payroll.get(DepartmentPayroll, dept_id)
+    if payroll_dept:
+        db_payroll.delete(payroll_dept)
+        try: db_payroll.commit()
+        except Exception as e: db_payroll.rollback(); raise HTTPException(status_code=500, detail=f"Lỗi xóa phòng ban từ Payroll DB: {e}")
+    
+    db_dept_hr = db_hr.get(DepartmentHR, dept_id)
+    if db_dept_hr:
+        db_hr.delete(db_dept_hr)
+        try: db_hr.commit()
+        except Exception as e: db_hr.rollback(); raise HTTPException(status_code=500, detail=f"Lỗi xóa phòng ban từ HR DB: {e}")
+    return True
+
+# --- Logic CRUD cho Position ---
+# --- ĐẢM BẢO HÀM NÀY ĐÚNG NHƯ SAU ---
+def get_positions(db_hr: Session):
+    try:
+        query = db_hr.query(PositionHR).order_by(PositionHR.PositionID)
+        # SỬA: Duyệt qua kết quả để tránh lỗi
+        results = list(query.all())
+        return results
+    except Exception as e:
+        print(f"Lỗi khi lấy danh sách chức vụ: {e}")
+        # Quan trọng: Ném lỗi ra để FastAPI xử lý và trả về 500
+        raise HTTPException(status_code=500, detail=f"Lỗi khi truy vấn chức vụ: {e}")
+# --- KẾT THÚC KIỂM TRA ---
+
+def create_position_synced(db_hr: Session, db_payroll: Session, pos: schemas.PositionCreate):
+    db_pos_hr = PositionHR(PositionName=pos.PositionName)
+    db_hr.add(db_pos_hr)
+    try:
+        db_hr.commit(); db_hr.refresh(db_pos_hr)
+    except Exception as e:
+        db_hr.rollback(); raise HTTPException(status_code=400, detail=f"Lỗi khi tạo chức vụ trong HR DB: {e}")
+    
+    db_pos_payroll = PositionPayroll(PositionID=db_pos_hr.PositionID, PositionName=db_pos_hr.PositionName)
+    db_payroll.add(db_pos_payroll)
+    try:
+        db_payroll.commit()
+    except Exception as e:
+        db_payroll.rollback(); db_hr.delete(db_pos_hr); db_hr.commit()
+        raise HTTPException(status_code=500, detail=f"Lỗi đồng bộ chức vụ sang Payroll DB: {e}")
+    return db_pos_hr
+
+def update_position_synced(db_hr: Session, db_payroll: Session, pos_id: int, pos_update: schemas.PositionUpdate):
+    db_pos_hr = db_hr.get(PositionHR, pos_id)
+    if not db_pos_hr: return None
+
+    update_data = pos_update.dict(exclude_unset=True)
+    for key, value in update_data.items(): setattr(db_pos_hr, key, value)
+    
+    db_hr.add(db_pos_hr)
+    try:
+        db_hr.commit(); db_hr.refresh(db_pos_hr)
+    except Exception as e:
+        db_hr.rollback(); raise HTTPException(status_code=400, detail=f"Lỗi khi cập nhật chức vụ HR DB: {e}")
+
+    db_pos_payroll = db_payroll.get(PositionPayroll, pos_id)
+    if db_pos_payroll and 'PositionName' in update_data:
+        db_pos_payroll.PositionName = update_data['PositionName']
+        db_payroll.add(db_pos_payroll)
+        try:
+            db_payroll.commit()
+        except Exception as e:
+            db_payroll.rollback(); print(f"CẢNH BÁO: Lỗi đồng bộ cập nhật chức vụ sang Payroll: {e}")
+    return db_pos_hr
+
+def delete_position(db_hr: Session, db_payroll: Session, pos_id: int):
+    if db_hr.query(EmployeeHR).filter(EmployeeHR.PositionID == pos_id).first(): return False
+    
+    payroll_pos = db_payroll.get(PositionPayroll, pos_id)
+    if payroll_pos:
+        db_payroll.delete(payroll_pos)
+        try: db_payroll.commit()
+        except Exception as e: db_payroll.rollback(); raise HTTPException(status_code=500, detail=f"Lỗi xóa chức vụ từ Payroll DB: {e}")
+        
+    db_pos_hr = db_hr.get(PositionHR, pos_id)
+    if db_pos_hr:
+        db_hr.delete(db_pos_hr)
+        try: db_hr.commit()
+        except Exception as e: db_hr.rollback(); raise HTTPException(status_code=500, detail=f"Lỗi xóa chức vụ từ HR DB: {e}")
+    return True
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\crud\crud_notification.py
+================================================================================
+# backend/crud/crud_notification.py
+from sqlalchemy.orm import Session
+from sqlalchemy import desc, or_
+from models import Notification, User as AuthUser
+import schemas
+from datetime import datetime, timedelta
+
+def create_notification(db_auth: Session, notification: schemas.NotificationCreate):
+    """Tạo một thông báo mới trong CSDL Auth."""
+    db_notification = Notification(**notification.dict())
+    db_auth.add(db_notification)
+    db_auth.commit()
+    db_auth.refresh(db_notification)
+    return db_notification
+
+def get_notifications_for_user(db_auth: Session, current_user: schemas.User, skip: int = 0, limit: int = 20, include_read: bool = False):
+    """
+    Lấy thông báo cho người dùng hiện tại dựa trên ID và vai trò của họ.
+    Sắp xếp theo thời gian mới nhất trước.
+    """
+    query = db_auth.query(Notification).filter(
+        or_(
+            Notification.user_id == current_user.id,             # Gửi trực tiếp cho user này
+            Notification.role_target == current_user.role        # Gửi cho vai trò của user này
+            # Cân nhắc: Có nên thêm Notification.role_target == None không? (Thông báo toàn hệ thống)
+        )
+    )
+
+    if not include_read:
+        query = query.filter(Notification.is_read == False)
+
+    # Lấy thông báo mới nhất trước
+    return query.order_by(desc(Notification.created_at)).offset(skip).limit(limit).all()
+
+def mark_notification_as_read(db_auth: Session, notification_id: int, current_user: schemas.User):
+    """Đánh dấu một thông báo là đã đọc, kiểm tra quyền truy cập."""
+    db_notification = db_auth.query(Notification).filter(Notification.id == notification_id).first()
+
+    if not db_notification:
+        return None # Không tìm thấy
+
+    # Kiểm tra xem user có quyền đọc thông báo này không
+    can_read = (
+        db_notification.user_id == current_user.id or
+        db_notification.role_target == current_user.role
+    )
+
+    if not can_read:
+         return "Forbidden" # User không có quyền
+
+    if not db_notification.is_read:
+        db_notification.is_read = True
+        db_auth.add(db_notification)
+        db_auth.commit()
+        db_auth.refresh(db_notification)
+
+    return db_notification
+
+def mark_all_notifications_as_read(db_auth: Session, current_user: schemas.User):
+    """Đánh dấu tất cả thông báo chưa đọc của user là đã đọc."""
+    notifications_to_mark = db_auth.query(Notification).filter(
+        or_(
+            Notification.user_id == current_user.id,
+            Notification.role_target == current_user.role
+        ),
+        Notification.is_read == False
+    ).all()
+
+    updated_count = 0
+    for notification in notifications_to_mark:
+        notification.is_read = True
+        db_auth.add(notification)
+        updated_count +=1
+
+    if updated_count > 0:
+        db_auth.commit()
+
+    return {"marked_read_count": updated_count}
+
+def get_unread_notification_count(db_auth: Session, current_user: schemas.User) -> int:
+    """Đếm số lượng thông báo chưa đọc cho user hiện tại."""
+    count = db_auth.query(Notification).filter(
+        or_(
+            Notification.user_id == current_user.id,
+            Notification.role_target == current_user.role
+        ),
+        Notification.is_read == False
+    ).count()
+    return count
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\crud\crud_payroll.py
+================================================================================
+from sqlalchemy.orm import Session
+from models import Salary, Attendance, EmployeePayroll
+import schemas
+from datetime import date
+from decimal import Decimal # Import Decimal
+
+def get_salary_history(db_payroll: Session, employee_id: int):
+    # Lấy lịch sử lương
+    return db_payroll.query(Salary).filter(Salary.EmployeeID == employee_id).order_by(Salary.SalaryMonth.desc()).all()
+
+def get_attendance_data(db_payroll: Session, employee_id: int):
+    # Lấy dữ liệu chấm công
+    return db_payroll.query(Attendance).filter(
+        (Attendance.EmployeeID == employee_id)
+    ).order_by(Attendance.AttendanceMonth.desc()).all()
+
+# --- HÀM MỚI ---
+def update_salary(db_payroll: Session, salary_id: int, salary_update: schemas.SalaryUpdate) -> Salary:
+    """
+    Cập nhật thông tin một bản ghi lương (ví dụ: Bonus, Deductions)
+    """
+    db_salary = db_payroll.get(Salary, salary_id)
+    if not db_salary:
+        return None
+
+    update_data = salary_update.dict(exclude_unset=True)
+
+    # Cập nhật các trường được cung cấp
+    for key, value in update_data.items():
+        setattr(db_salary, key, value)
+
+    # Tự động tính toán lại NetSalary nếu các thành phần của nó thay đổi
+    if 'BaseSalary' in update_data or 'Bonus' in update_data or 'Deductions' in update_data:
+        base = db_salary.BaseSalary if db_salary.BaseSalary is not None else Decimal(0)
+        bonus = db_salary.Bonus if db_salary.Bonus is not None else Decimal(0)
+        deductions = db_salary.Deductions if db_salary.Deductions is not None else Decimal(0)
+        db_salary.NetSalary = base + bonus - deductions
+
+    db_payroll.add(db_salary)
+    try:
+        db_payroll.commit()
+        db_payroll.refresh(db_salary)
+    except Exception as e:
+        db_payroll.rollback()
+        raise e # Ném lỗi ra để endpoint xử lý và trả về cho client
+        
+    return db_salary
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\crud\crud_user.py
+================================================================================
+# backend/crud/crud_user.py
+from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from models import User
+import schemas
+from core.security import get_password_hash
+from typing import Optional # Make sure Optional is imported
+
+def get_user_by_email(db_auth: Session, email: str):
+    return db_auth.query(User).filter(User.email == email).first()
+
+def get_user_by_id(db_auth: Session, user_id: int):
+    return db_auth.query(User).filter(User.id == user_id).first()
+
+# --- HÀM ĐÃ SỬA ---
+def get_users(
+    db_auth: Session,
+    skip: int = 0,
+    limit: int = 100,
+    search: Optional[str] = None,
+    role: Optional[str] = None # <-- Đảm bảo tham số 'role' ở đây
+):
+    query = db_auth.query(User)
+
+    # Filter by search term
+    if search:
+        search_term_like = f"%{search}%"
+        query = query.filter(
+            or_(
+                User.full_name.ilike(search_term_like),
+                User.email.ilike(search_term_like)
+            )
+        )
+
+    # Filter by role
+    if role: # <-- Đảm bảo logic lọc ở đây
+        query = query.filter(User.role == role)
+
+    # Apply ordering, skip, and limit before fetching
+    return query.order_by(User.id).offset(skip).limit(limit).all()
+# --- KẾT THÚC HÀM SỬA ---
+
+def create_user(db_auth: Session, user: schemas.UserCreate):
+    # Ensure password hashing/storing logic is consistent (using plain text now)
+    hashed_password = get_password_hash(user.password) # This should just return the plain password
+    db_user = User(
+        full_name=user.full_name,
+        email=user.email,
+        hashed_password=hashed_password, # Storing plain text password
+        role=user.role,
+        phone_number=user.phone_number,
+        employee_id_link=user.employee_id_link
+    )
+    db_auth.add(db_user)
+    db_auth.commit()
+    db_auth.refresh(db_user)
+    return db_user
+
+def update_user_role(db_auth: Session, user_id: int, new_role: str):
+    db_user = get_user_by_id(db_auth, user_id)
+    if not db_user:
+        return None
+    db_user.role = new_role
+    db_auth.add(db_user)
+    db_auth.commit()
+    db_auth.refresh(db_user)
+    return db_user
+
+def update_user_password(db_auth: Session, user_id: int, new_password: str):
+    db_user = get_user_by_id(db_auth, user_id)
+    if not db_user:
+        return None
+
+    # Ensure password hashing/storing logic is consistent
+    db_user.hashed_password = get_password_hash(new_password) # Should return plain password
+    db_auth.add(db_user)
+    db_auth.commit()
+    db_auth.refresh(db_user)
+    return db_user
+
+================================================================================
+FILE: E:/Tai Lieu Hoc Tap/SE 445 O/Group_Project/HR_Dashboard_Project/backend\services\alert_service.py
+================================================================================
+# backend/services/alert_service.py
+from sqlalchemy.orm import Session
+from sqlalchemy import extract, func, and_
+from datetime import date
+from models import EmployeeHR, Attendance, Salary
+# --- THÊM IMPORTS ---
+from database import SessionLocalAuth # Cần session để ghi vào Auth DB
+from crud import crud_notification    # Cần CRUD để tạo notification
+import schemas                        # Cần schema NotificationCreate
+# --- KẾT THÚC THÊM ---
+import smtplib # Thư viện gửi email (ví dụ)
+from email.mime.text import MIMEText # Thư viện gửi email (ví dụ)
+
+# --- THÊM HÀM HELPER ---
+def _create_alert_notification(type: str, message: str, role_target: str = None, user_id: int = None, related_employee_id: int = None):
+    """Hàm nội bộ để tạo thông báo trong Auth DB, xử lý session."""
+    db_auth = SessionLocalAuth()
+    try:
+        notification_in = schemas.NotificationCreate(
+            message=message,
+            type=type,
+            role_target=role_target,
+            user_id=user_id,
+            related_employee_id=related_employee_id
+        )
+        crud_notification.create_notification(db_auth, notification_in)
+        print(f"NOTIFICATION CREATED: [{type}] {message} (Target: {role_target or user_id})") # Log ra console
+    except Exception as e:
+        print(f"!!! ERROR: Failed to create DB notification: {e}")
+    finally:
+        db_auth.close()
+# --- KẾT THÚC HÀM HELPER ---
+
+
+def check_work_anniversaries(db_hr: Session):
+    """Kiểm tra kỷ niệm và tạo thông báo."""
+    today = date.today()
+    anniversary_years = [1, 3, 5, 10, 15, 20]
+
+    employees = db_hr.query(EmployeeHR).filter(
+        extract('month', EmployeeHR.HireDate) == today.month,
+        extract('day', EmployeeHR.HireDate) == today.day
+    ).all()
+
+    for emp in employees:
+        years_worked = today.year - emp.HireDate.year
+        if years_worked in anniversary_years:
+            message = f"Nhân viên {emp.FullName} (ID: {emp.EmployeeID}) kỷ niệm {years_worked} năm làm việc hôm nay!"
+            # Tạo thông báo cho HR Manager và Admin
+            _create_alert_notification(type="anniversary", message=message, role_target="HR Manager", related_employee_id=emp.EmployeeID)
+            _create_alert_notification(type="anniversary", message=message, role_target="Admin", related_employee_id=emp.EmployeeID)
+
+def check_excessive_leave(db_payroll: Session):
+    """Kiểm tra nghỉ phép quá hạn và tạo thông báo."""
+    MAX_LEAVE_DAYS = 12
+    current_year = date.today().year
+
+    excessive_leave_users = db_payroll.query(
+        Attendance.EmployeeID,
+        func.sum(Attendance.LeaveDays).label("total_leave")
+    ).filter(
+        extract('year', Attendance.AttendanceMonth) == current_year
+    ).group_by(Attendance.EmployeeID).having(
+        func.sum(Attendance.LeaveDays) > MAX_LEAVE_DAYS
+    ).all()
+
+    for emp_id, leave_days in excessive_leave_users:
+        message = f"Nhân viên ID {emp_id} đã sử dụng {leave_days} ngày nghỉ phép năm {current_year} (vượt ngưỡng {MAX_LEAVE_DAYS})."
+        # Tạo thông báo cho HR Manager và Admin
+        _create_alert_notification(type="leave_warning", message=message, role_target="HR Manager", related_employee_id=emp_id)
+        _create_alert_notification(type="leave_warning", message=message, role_target="Admin", related_employee_id=emp_id)
+
+def check_payroll_discrepancies(db_payroll: Session):
+    """Kiểm tra chênh lệch lương và tạo thông báo."""
+    latest_salary_date = db_payroll.query(func.max(Salary.SalaryMonth)).scalar()
+    if not latest_salary_date: 
+        print("ALERT_SERVICE: Không có dữ liệu lương (Salary) để so sánh chênh lệch.")
+        return
+
+    previous_salary_date = db_payroll.query(func.max(Salary.SalaryMonth))\
+        .filter(Salary.SalaryMonth < latest_salary_date)\
+        .scalar()
+    if not previous_salary_date: 
+        print(f"ALERT_SERVICE: Chỉ có 1 tháng dữ liệu lương ({latest_salary_date}), không thể so sánh chênh lệch.")
+        return
+
+    total_latest = db_payroll.query(func.sum(Salary.NetSalary))\
+        .filter(Salary.SalaryMonth == latest_salary_date).scalar() or 0
+    total_previous = db_payroll.query(func.sum(Salary.NetSalary))\
+        .filter(Salary.SalaryMonth == previous_salary_date).scalar() or 0
+
+    message = None
+    if total_previous == 0 and total_latest > 0:
+        message = f"Tổng lương tháng {latest_salary_date} là {total_latest:,.0f} VNĐ (tháng trước là 0)."
+    elif total_previous > 0:
+        try:
+            percentage_diff = ((float(total_latest) - float(total_previous)) / float(total_previous)) * 100
+            THRESHOLD = 20.0
+            if abs(percentage_diff) > THRESHOLD:
+                trend = "tăng" if percentage_diff > 0 else "giảm"
+                message = f"Chênh lệch lương lớn ({trend} {abs(percentage_diff):.1f}%)! Tháng {previous_salary_date}: {total_previous:,.0f} VNĐ -> Tháng {latest_salary_date}: {total_latest:,.0f} VNĐ."
+        except ZeroDivisionError: pass
+
+    if message:
+        # Tạo thông báo cho Payroll Manager và Admin
+        _create_alert_notification(type="payroll_discrepancy", message=message, role_target="Payroll Manager")
+        _create_alert_notification(type="payroll_discrepancy", message=message, role_target="Admin")
+    else:
+        # Ghi log nếu không có chênh lệch đáng kể
+        print(f"ALERT_SERVICE: Payroll discrepancy check OK between {previous_salary_date} and {latest_salary_date}.")
+
+
+def send_monthly_payroll_emails(db_hr: Session, db_payroll: Session):
+    """Gửi email lương hàng tháng (Giả lập). Không tạo thông báo trong CSDL."""
+    # Lấy danh sách nhân viên active (giả sử 'Đang làm việc' là status active)
+    active_employees = db_hr.query(EmployeeHR.EmployeeID, EmployeeHR.Email, EmployeeHR.FullName)\
+        .filter(EmployeeHR.Status.ilike('Đang làm việc') | EmployeeHR.Status.ilike('Active'))\
+        .all()
+        
+    # Lấy tháng lương gần nhất (giả định)
+    latest_salary_date = db_payroll.query(func.max(Salary.SalaryMonth)).scalar()
+    if not latest_salary_date:
+        print("ALERT_SERVICE: Không có dữ liệu lương (Salary) để gửi email.")
+        return
+        
+    print(f"SERVICE: Đang chuẩn bị gửi email lương tháng {latest_salary_date} cho {len(active_employees)} nhân viên...")
+    
+    # Vòng lặp gửi email (giả lập)
+    for emp_id, email, full_name in active_employees:
+        # Lấy lương của nhân viên này
+        salary_record = db_payroll.query(Salary)\
+            .filter(Salary.EmployeeID == emp_id, Salary.SalaryMonth == latest_salary_date)\
+            .first()
+
+        if salary_record:
+            # (Logic giả lập gửi email giữ nguyên)
+            print(f"  -> (Giả lập) Gửi email cho {email} (Lương: {salary_record.NetSalary})")
+        else:
+            print(f"  -> Bỏ qua {email} (Không tìm thấy bản ghi lương tháng {latest_salary_date})")
+            
+    print("SERVICE: Gửi email lương hàng tháng hoàn tất.")

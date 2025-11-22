@@ -1,7 +1,7 @@
 # backend/models.py
-from sqlalchemy import Column, Integer, String, Date, DateTime, DECIMAL, ForeignKey, NVARCHAR, Boolean
+from sqlalchemy import Column, Integer, String, Date, DateTime, DECIMAL, ForeignKey, NVARCHAR, Boolean, Float
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func # Thêm func
+from sqlalchemy.sql import func
 from database import BaseSQLServer, BaseMySQL, BaseAuth
 
 # --- Models cho HUMAN_2025 (SQL Server) ---
@@ -58,6 +58,7 @@ class EmployeePayroll(BaseMySQL):
 
     salaries = relationship("Salary", back_populates="employee")
     attendances = relationship("Attendance", back_populates="employee")
+    leave_requests = relationship("LeaveRequestPayroll", back_populates="employee")
 
 class DepartmentPayroll(BaseMySQL):
     __tablename__ = 'departments'
@@ -92,8 +93,23 @@ class Attendance(BaseMySQL):
 
     employee = relationship("EmployeePayroll", back_populates="attendances")
 
+# (Optional) Model LeaveRequest nếu muốn lưu ở MySQL
+class LeaveRequestPayroll(BaseMySQL):
+    __tablename__ = 'leave_requests'
+    RequestID = Column(Integer, primary_key=True, index=True)
+    EmployeeID = Column(Integer, ForeignKey('employees.EmployeeID'))
+    LeaveType = Column(String(50))
+    StartDate = Column(Date, nullable=False)
+    EndDate = Column(Date, nullable=False)
+    Reason = Column(String(255))
+    Status = Column(String(50), default='Pending')
+    ApprovedBy = Column(String(100), nullable=True)
+    CreatedAt = Column(DateTime(timezone=True), server_default=func.now())
 
-# --- Model cho DASHBOARD AUTH (SQLite) ---
+    employee = relationship("EmployeePayroll", back_populates="leave_requests")
+
+
+# --- Models cho DASHBOARD AUTH (SQLite) ---
 
 class User(BaseAuth):
     __tablename__ = 'users'
@@ -105,24 +121,48 @@ class User(BaseAuth):
     role = Column(String(50), nullable=False)
     employee_id_link = Column(Integer, unique=True, nullable=True)
 
-# --- THÊM MODEL MỚI CHO THÔNG BÁO ---
 class Notification(BaseAuth):
     __tablename__ = 'notifications'
     id = Column(Integer, primary_key=True, index=True)
-    # ID của người dùng cụ thể nhận thông báo (NULL nếu là thông báo hệ thống/vai trò)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
-    # Vai trò mục tiêu (VD: "Admin", "HR Manager") - NULL nếu cho user_id cụ thể hoặc toàn hệ thống
     role_target = Column(String(50), nullable=True)
-    # Nội dung thông báo
     message = Column(String(500), nullable=False)
-    # Loại thông báo (để phân loại, VD: "anniversary", "leave_warning", "payroll_discrepancy")
     type = Column(String(50), nullable=False)
-    # Trạng thái đã đọc
     is_read = Column(Boolean, default=False, nullable=False)
-    # Thời gian tạo
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    # ID của nhân viên liên quan (VD: ID nhân viên có kỷ niệm, ID nhân viên nghỉ quá phép)
     related_employee_id = Column(Integer, nullable=True)
 
-    # (Không bắt buộc) Tạo quan hệ ngược lại với User nếu cần
-    # user = relationship("User", back_populates="notifications")
+class Shareholder(BaseAuth):
+    __tablename__ = 'shareholders'
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, unique=True, index=True, nullable=False)
+    shares = Column(Integer, default=0, nullable=False)
+    status = Column(String(50), default="Active")
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+class LeaveRequest(BaseAuth):
+    __tablename__ = 'leave_requests_auth' # Đổi tên bảng để tránh trùng nếu có
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, index=True, nullable=False)
+    leave_type = Column(String(50), nullable=False)
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date, nullable=False)
+    reason = Column(String(255))
+    status = Column(String(50), default='Pending')
+    approved_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class AuditLog(BaseAuth):
+    __tablename__ = 'audit_logs'
+    id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String(100), nullable=False)
+    action = Column(String(50), nullable=False)
+    target = Column(String(100), nullable=True)
+    details = Column(String(255), nullable=True)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
+class SystemConfig(BaseAuth):
+    __tablename__ = 'system_configs'
+    key = Column(String(50), primary_key=True)
+    value = Column(String(255))
+    description = Column(String(255), nullable=True)

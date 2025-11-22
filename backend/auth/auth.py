@@ -3,90 +3,88 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
-from pydantic import ValidationError
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from core.config import settings
 from database import get_db_auth
-from models import User as AuthUser
-import schemas
 from crud import crud_user
+import schemas
 
-if TYPE_CHECKING:
-    from models import EmployeeHR
-
+# Endpoint để lấy token (Swagger UI sẽ dùng link này)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/login")
 
-# --- Logic phân quyền (Giữ nguyên) ---
-def get_user_role(db_user: 'EmployeeHR') -> str:
-    if not db_user:
-        return "Employee"
-    if db_user.PositionID == 5: # Giám đốc
-        return "Admin"
-    elif db_user.DepartmentID == 1: # Nhân sự
-        return "HR Manager"
-    elif db_user.DepartmentID == 2: # Kế toán
-        return "Payroll Manager"
-    else:
-        return "Employee"
-
+# --- HÀM XÁC THỰC TOKEN ---
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db_auth)
 ) -> schemas.User:
+    """
+    Giải mã JWT Token để lấy thông tin user.
+    Nếu token sai hoặc hết hạn -> Trả về 401 Unauthorized.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
+        # Giải mã token
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("sub")
         role: str = payload.get("role")
         emp_id: Optional[int] = payload.get("emp_id")
 
-        user_in_db = crud_user.get_user_by_email(db, email=email)
-        if not user_in_db:
-             raise credentials_exception
-        user_id = user_in_db.id
-
         if email is None or role is None:
             raise credentials_exception
-
+        
         token_data = schemas.TokenData(email=email, role=role, emp_id=emp_id)
-
-    except (JWTError, ValidationError):
+    except JWTError:
         raise credentials_exception
 
-    # Lấy lại user từ DB để đảm bảo user vẫn tồn tại
+    # Kiểm tra user có tồn tại trong DB không (tránh trường hợp user bị xóa nhưng token vẫn còn hạn)
     user = crud_user.get_user_by_email(db, email=token_data.email)
     if user is None:
         raise credentials_exception
+    
+    # Trả về User object (bao gồm role và emp_id để phân quyền)
+    return schemas.User(
+        id=user.id, 
+        email=user.email, 
+        role=user.role, # Quan trọng: Role lấy từ DB (mới nhất) hoặc từ Token
+        emp_id=user.employee_id_link
+    )
 
-    return schemas.User(id=user.id, email=user.email, role=token_data.role, emp_id=token_data.emp_id)
+# --- DEPENDENCIES PHÂN QUYỀN (RBAC) ---
 
-
-# --- Dependency phân quyền ---
 def get_current_active_admin(current_user: schemas.User = Depends(get_current_user)):
+    """Chỉ Admin mới được phép truy cập."""
     if current_user.role != "Admin":
-        raise HTTPException(status_code=403, detail="Not authorized: Admins only")
+        raise HTTPException(status_code=403, detail="Không đủ quyền: Chỉ dành cho Admin")
     return current_user
 
-# --- SỬA HÀM NÀY ---
 def get_current_active_hr_manager(current_user: schemas.User = Depends(get_current_user)):
-    # CHO PHÉP CẢ Payroll Manager TRUY CẬP CÁC ENDPOINT DÙNG DEPENDENCY NÀY
-    allowed_roles = ["Admin", "HR Manager", "Payroll Manager"]
-    if current_user.role not in allowed_roles:
-        raise HTTPException(status_code=403, detail="Not authorized: HR, Payroll, or Admins only") # Cập nhật thông báo lỗi
+    """HR Manager (và Admin) được phép truy cập."""
+    if current_user.role not in ["Admin", "HR Manager"]:
+        raise HTTPException(status_code=403, detail="Không đủ quyền: Chỉ dành cho HR Manager")
     return current_user
-# --- KẾT THÚC SỬA ---
 
-# --- SỬA HÀM NÀY (Đã bao gồm trong thay đổi ở trên, nhưng để rõ ràng) ---
 def get_current_active_payroll_manager(current_user: schemas.User = Depends(get_current_user)):
-    # Dependency này vẫn giữ nguyên, chỉ cho Admin và Payroll Manager
+    """Payroll Manager (và Admin) được phép truy cập."""
     if current_user.role not in ["Admin", "Payroll Manager"]:
-        raise HTTPException(status_code=403, detail="Not authorized: Payroll or Admins only")
+        raise HTTPException(status_code=403, detail="Không đủ quyền: Chỉ dành cho Payroll Manager")
     return current_user
-# --- KẾT THÚC SỬA ---
+
+# Helper logic: Tự động xác định Role dựa trên vị trí (dùng khi đồng bộ từ HR)
+def get_user_role(db_emp_hr) -> str:
+    """Logic business để map từ vị trí/phòng ban sang Role hệ thống."""
+    if not db_emp_hr: return "Employee"
+    
+    # Giả định logic (Bạn có thể sửa theo dữ liệu thực tế của HUMAN_2025)
+    # Ví dụ: PositionID 5 là Giám đốc -> Admin
+    if db_emp_hr.PositionID == 5: return "Admin"
+    # Phòng Nhân sự (ID 1) -> HR Manager
+    elif db_emp_hr.DepartmentID == 1: return "HR Manager"
+    # Phòng Kế toán (ID 2) -> Payroll Manager
+    elif db_emp_hr.DepartmentID == 2: return "Payroll Manager"
+    
+    return "Employee"

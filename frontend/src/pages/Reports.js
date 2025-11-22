@@ -1,215 +1,183 @@
 // frontend/src/pages/Reports.js
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
-import EmployeeDeptChart from '../components/charts/EmployeeDeptChart';
-import AvgSalaryChart from '../components/charts/AvgSalaryChart';
-import { motion } from 'framer-motion';
+import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-toastify';
+import { motion } from 'framer-motion';
 
-// --- Skeleton Component ---
-const SkeletonCard = ({ chart = true }) => (
-    <div style={styles.card}>
-        <div style={{ ...styles.skeletonItem, height: '24px', width: '40%', marginBottom: '15px' }} className="skeletonItem"></div>
-        <div style={{ ...styles.skeletonItem, height: '36px', width: '60%', marginBottom: '25px' }} className="skeletonItem"></div>
-        {chart ? (
-            <div style={{ ...styles.skeletonItem, height: '250px', width: '100%' }} className="skeletonItem"></div>
-        ) : (
-            <>
-                <div style={{ ...styles.skeletonItem, height: '20px', width: '80%', marginBottom: '10px' }} className="skeletonItem"></div>
-                <div style={{ ...styles.skeletonItem, height: '20px', width: '70%' }} className="skeletonItem"></div>
-            </>
-        )}
-    </div>
-);
+// Import Charts
+import EmployeeDeptChart from '../components/charts/EmployeeDeptChart';
+import CostStructureChart from '../components/charts/CostStructureChart';
 
-// --- Hàm tiện ích định dạng tiền tệ (Giả định VNĐ) ---
-const formatCurrency = (value) => {
-    if (typeof value !== 'number') return value;
-    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
-};
+// --- Icons ---
+const FilterIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>;
+const ExportIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>;
+const ChartIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>;
 
 function Reports() {
-    const [hrReport, setHrReport] = useState(null);
-    const [payrollReport, setPayrollReport] = useState(null);
-    const [dividendReport, setDividendReport] = useState(null);
+    const { user } = useAuth();
+    const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
-
-    // Lấy theme status cho màu chart
-    const isDarkMode = document.body.classList.contains('theme-dark');
-    const barColor1 = isDarkMode ? '#6A7FAB' : '#8884d8';
-    const barColor2 = isDarkMode ? '#77BFA3' : '#82ca9d';
-    const textColor = isDarkMode ? 'var(--text-color-secondary)' : '#666';
+    
+    // Filter States
+    const [deptFilter, setDeptFilter] = useState('');
+    const [posFilter, setPosFilter] = useState('');
+    const [dateFilter, setDateFilter] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+    const [departments, setDepartments] = useState([]);
+    const [positions, setPositions] = useState([]);
 
     useEffect(() => {
-        const fetchReports = async () => {
+        const init = async () => {
             setLoading(true);
             try {
-                const [hrRes, payrollRes, dividendRes] = await Promise.all([
-                    api.get('/reports/hr_summary'),
-                    api.get('/reports/payroll_summary'),
-                    api.get('/reports/dividend_summary')
+                const [summaryRes, deptRes, posRes] = await Promise.all([
+                    api.get('/reports/dashboard-summary'),
+                    api.get('/departments/'),
+                    api.get('/positions/')
                 ]);
-                setHrReport(hrRes.data);
-                setPayrollReport(payrollRes.data);
-                setDividendReport(dividendRes.data);
+                setData(summaryRes.data);
+                setDepartments(deptRes.data);
+                setPositions(posRes.data);
             } catch (error) {
-                console.error("Failed to fetch reports", error);
-                toast.error("Không thể tải dữ liệu báo cáo.");
+                console.error(error);
+                toast.error("Lỗi tải dữ liệu báo cáo.");
+            } finally {
+                setLoading(false);
             }
-            setLoading(false);
         };
-        fetchReports();
+        init();
     }, []);
 
-    if (loading) {
-        return (
-            // FIX: Sửa padding từ '0px' thành '20px'
-            <div style={{ padding: '20px', color: 'var(--text-color)' }}>
-                <h2 style={{ color: 'var(--text-color)' }}>Báo cáo Tích hợp</h2>
-                <div style={styles.gridContainer}>
-                    <SkeletonCard chart={true} />
-                    <SkeletonCard chart={true} />
-                </div>
-                <div style={{marginTop: '20px'}}>
-                    <SkeletonCard chart={false} />
-                </div>
-            </div>
-        );
-    }
+    const handleFilter = () => {
+        toast.info("Đang lọc dữ liệu... (Tính năng Demo)");
+        // Trong thực tế sẽ gọi API với query params
+    };
+
+    const handleExport = () => {
+        toast.success("Đang xuất báo cáo PDF...");
+    };
+
+    if (loading) return <div style={{padding:'40px', textAlign:'center', color:'var(--text-color)'}}>Đang tải báo cáo phân tích...</div>;
+    if (!data) return <div style={{padding:'20px'}}>Không có dữ liệu.</div>;
+
+    const { payroll_metrics, financial_metrics } = data;
 
     return (
-        <motion.div
-            initial={{ opacity: 0, y: 20 }}
+        <motion.div 
+            initial={{ opacity: 0, y: 20 }} 
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3 }}
-            // FIX: Sửa padding từ '0px' thành '20px'
             style={{ padding: '20px', color: 'var(--text-color)' }}
         >
-            <h2 style={{ color: 'var(--text-color)' }}>Báo cáo Tích hợp</h2>
-
-            <div style={styles.gridContainer}>
-                {/* Báo cáo HR */}
-                <div style={styles.card}>
-                    <h3 style={{ color: 'var(--text-color)' }}>Báo cáo Nhân sự (SQL Server)</h3>
-                    {hrReport ? (
-                        <>
-                            <div style={styles.statItem}>
-                                <span style={styles.statLabel}>Tổng số nhân viên</span>
-                                <span style={styles.statValue}>{hrReport.total_employees}</span>
-                            </div>
-                            <EmployeeDeptChart data={hrReport.distribution_by_dept} barColor={barColor1} textColor={textColor} />
-                        </>
-                    ) : <p>Lỗi tải báo cáo HR.</p>}
-                </div>
-
-                {/* Báo cáo Payroll */}
-                <div style={styles.card}>
-                    <h3 style={{ color: 'var(--text-color)' }}>Báo cáo Lương (MySQL)</h3>
-                    {payrollReport ? (
-                        <>
-                            <div style={styles.statItem}>
-                                <span style={styles.statLabel}>Tổng quỹ lương (tháng gần nhất)</span>
-                                <span style={styles.statValue}>{formatCurrency(payrollReport.total_salary_budget)}</span>
-                            </div>
-                            <AvgSalaryChart data={payrollReport.avg_salary_by_dept} barColor={barColor2} textColor={textColor} />
-                        </>
-                    ) : <p>Lỗi tải báo cáo Payroll.</p>}
-                </div>
+            {/* HEADER */}
+            <div style={{marginBottom: '30px'}}>
+                <h1 style={{margin: 0, fontSize:'2rem'}}>Báo cáo Phân tích</h1>
+                <p style={{color:'var(--text-color-secondary)', marginTop:'5px'}}>Xin chào, {user?.role}!</p>
             </div>
 
-            {/* Báo cáo Cổ tức (Full width) */}
-            <div style={{...styles.card, marginTop: '20px'}}>
-                <h3 style={{ color: 'var(--text-color)' }}>Báo cáo Cổ tức (SQL Server)</h3>
-                {dividendReport ? (
-                    <div style={styles.dividendGrid}>
-                        <div style={styles.statItem}>
-                            <span style={styles.statLabel}>Tổng cổ tức đã chi</span>
-                            <span style={styles.statValue}>{formatCurrency(dividendReport.total_dividend_amount)}</span>
-                        </div>
-                        <div style={styles.statItem}>
-                            <span style={styles.statLabel}>Số nhân viên là cổ đông</span>
-                            <span style={styles.statValue}>{dividendReport.employee_shareholders}</span>
-                        </div>
+            {/* MAIN CONTAINER */}
+            <div style={styles.reportContainer}>
+                {/* TITLE BAR */}
+                <div style={styles.titleBar}>
+                    <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
+                        <ChartIcon />
+                        <h3 style={{margin:0}}>Báo cáo Phân tích Lương & Nhân sự</h3>
                     </div>
-                ) : <p>Lỗi tải báo cáo Cổ tức.</p>}
-            </div>
+                    <button onClick={handleExport} style={styles.btnExport}>
+                        <ExportIcon /> Xuất Báo cáo
+                    </button>
+                </div>
 
+                {/* FILTER BAR */}
+                <div style={styles.filterBar}>
+                    <div style={styles.filterItem}>
+                        <label style={styles.label}>Phòng ban</label>
+                        <select value={deptFilter} onChange={e=>setDeptFilter(e.target.value)} style={styles.select}>
+                            <option value="">Tất cả phòng ban</option>
+                            {departments.map(d => <option key={d.DepartmentID} value={d.DepartmentID}>{d.DepartmentName}</option>)}
+                        </select>
+                    </div>
+                    <div style={styles.filterItem}>
+                        <label style={styles.label}>Chức vụ</label>
+                        <select value={posFilter} onChange={e=>setPosFilter(e.target.value)} style={styles.select}>
+                            <option value="">Tất cả chức vụ</option>
+                            {positions.map(p => <option key={p.PositionID} value={p.PositionID}>{p.PositionName}</option>)}
+                        </select>
+                    </div>
+                    <div style={styles.filterItem}>
+                        <label style={styles.label}>Khoảng thời gian</label>
+                        <input type="month" value={dateFilter} onChange={e=>setDateFilter(e.target.value)} style={styles.input} />
+                    </div>
+                    <div style={{alignSelf:'flex-end'}}>
+                        <button onClick={handleFilter} style={styles.btnFilter}>
+                            <FilterIcon /> Lọc dữ liệu
+                        </button>
+                    </div>
+                </div>
+
+                {/* CHARTS GRID */}
+                <div style={styles.chartGrid}>
+                    {/* Left Chart */}
+                    <div style={styles.chartBox}>
+                        <h4 style={{marginTop:0, marginBottom:'20px', color:'var(--text-color)'}}>Phân phối Lương theo Phòng ban</h4>
+                        <EmployeeDeptChart 
+                            data={payroll_metrics.salary_by_dept.reduce((acc, cur) => ({...acc, [cur.name]: cur.value}), {})}
+                            barColor="#00C49F" // Teal color like image
+                            textColor="var(--text-color-secondary)"
+                        />
+                    </div>
+
+                    {/* Right Chart */}
+                    <div style={styles.chartBox}>
+                        <CostStructureChart 
+                            salary={payroll_metrics.total_base_salary}
+                            bonus={payroll_metrics.total_bonus}
+                            dividend={financial_metrics.total_dividends}
+                        />
+                    </div>
+                </div>
+            </div>
         </motion.div>
     );
 }
 
-// --- STYLES ĐÃ CẬP NHẬT ---
 const styles = {
-    gridContainer: {
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))',
-        gap: '20px',
+    reportContainer: {
+        backgroundColor: 'var(--card-bg)', // Dark/Light background based on theme
+        borderRadius: '12px',
+        border: '1px solid var(--border-color)',
+        padding: '25px',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
     },
-    card: {
-        backgroundColor: 'var(--card-bg)', // Dùng var
-        border: '1px solid var(--border-color)', // Dùng var
-        padding: '15px 20px',
-        borderRadius: '8px',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+    titleBar: {
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        marginBottom: '25px', borderBottom: '1px solid var(--border-color)', paddingBottom: '15px'
     },
-    statItem: {
-        marginBottom: '20px',
+    btnExport: {
+        display: 'flex', alignItems: 'center', gap: '8px',
+        background: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px',
+        padding: '8px 16px', cursor: 'pointer', fontWeight: '600',
+        boxShadow: '0 2px 4px rgba(59, 130, 246, 0.3)'
     },
-    statLabel: {
-        fontSize: '0.9em',
-        color: 'var(--text-color-secondary)', // Dùng var
-        display: 'block',
+    filterBar: {
+        display: 'flex', gap: '20px', flexWrap: 'wrap', marginBottom: '30px',
+        background: 'var(--bg-color)', padding: '15px', borderRadius: '8px' // Lighter background for filter
     },
-    statValue: {
-        fontSize: '1.8em',
-        fontWeight: 'bold',
-        color: 'var(--text-color)', // Dùng var
+    filterItem: { display: 'flex', flexDirection: 'column', flex: 1, minWidth: '200px' },
+    label: { fontSize: '0.85em', color: 'var(--text-color-secondary)', marginBottom: '5px', fontWeight: 'bold' },
+    select: { padding: '10px', borderRadius: '6px', border: '1px solid var(--input-border-color)', background: 'var(--card-bg)', color: 'var(--text-color)' },
+    input: { padding: '9px', borderRadius: '6px', border: '1px solid var(--input-border-color)', background: 'var(--card-bg)', color: 'var(--text-color)' },
+    btnFilter: {
+        display: 'flex', alignItems: 'center', gap: '8px',
+        background: '#4b5563', color: 'white', border: 'none', borderRadius: '6px',
+        padding: '10px 20px', cursor: 'pointer', fontWeight: '600', height: '38px'
     },
-    dividendGrid: {
-        display: 'flex',
-        gap: '30px',
-        color: 'var(--text-color)', // Dùng var
+    chartGrid: {
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '30px'
     },
-    skeletonItem: {
-        backgroundColor: '#e0e0e0', // Màu cơ bản
-        borderRadius: '4px',
-        animation: 'pulse 1.5s infinite ease-in-out',
+    chartBox: {
+        background: 'var(--card-bg)', // Same as container or slightly different
+        padding: '10px', borderRadius: '8px'
     }
 };
-
-// --- CSS ĐỘNG ĐÃ CẬP NHẬT ---
-(function() {
-    const styleId = 'reports-styles';
-    if (document.getElementById(styleId)) {
-        document.getElementById(styleId).remove();
-    }
-    const styleSheet = document.createElement("style");
-    styleSheet.id = styleId;
-    styleSheet.type = "text/css";
-    styleSheet.innerText = `
-        @keyframes pulse {
-            0% { background-color: #e0e0e0; }
-            50% { background-color: #f0f0f0; }
-            100% { background-color: #e0e0e0; }
-        }
-        /* Dark skeleton */
-        body.theme-dark .skeletonItem {
-            background-color: #333;
-            opacity: 0.5;
-            animation-name: pulse-dark;
-        }
-        @keyframes pulse-dark {
-            0%{background-color:#333;opacity:.5}
-            50%{background-color:#444;opacity:.7}
-            100%{background-color:#333;opacity:.5}
-        }
-        /* Đảm bảo text của Recharts dùng biến CSS */
-        .recharts-text {
-            fill: var(--text-color-secondary) !important;
-        }
-    `;
-    document.head.appendChild(styleSheet);
-})();
 
 export default Reports;
