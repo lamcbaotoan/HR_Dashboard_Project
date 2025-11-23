@@ -17,7 +17,7 @@ def read_departments(
 ):
     return crud_hr.get_departments(db_hr)
 
-# [cite_start]Thêm mới: Chỉ HR/Admin [cite: 5]
+# Thêm mới: Chỉ HR/Admin
 @router.post("/", response_model=schemas.Department, status_code=status.HTTP_201_CREATED)
 def create_department(
     dept: schemas.DepartmentCreate,
@@ -49,6 +49,13 @@ def delete_department(
     db_payroll: Session = Depends(get_db_mysql),
     current_user: schemas.User = Depends(get_current_active_hr_manager)
 ):
-    # Logic xóa đã có check ràng buộc bên trong crud_hr
-    crud_hr.delete_department(db_hr, db_payroll, dept_id)
+    try:
+        # Logic xóa đã có check ràng buộc bên trong crud_hr
+        crud_hr.delete_department(db_hr, db_payroll, dept_id)
+    except HTTPException as e:
+        # [UPDATE] Bắt lỗi HTTPException từ CRUD và ném lại để Frontend nhận được 400
+        raise e 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi hệ thống: {e}")
+    
     return None

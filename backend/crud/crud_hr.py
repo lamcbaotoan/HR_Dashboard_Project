@@ -10,10 +10,11 @@ import schemas
 
 def get_departments(db_hr: Session):
     """Lấy danh sách từ HUMAN_2025"""
+    # [FIX] Có thể thêm logic đếm số nhân viên nếu cần hiển thị ở Frontend
     return list(db_hr.query(DepartmentHR).all())
 
 def create_department_synced(db_hr: Session, db_payroll: Session, dept: schemas.DepartmentCreate):
-    # [cite_start]1. Tạo HR [cite: 1]
+    # 1. Tạo HR
     db_dept = DepartmentHR(DepartmentName=dept.DepartmentName)
     db_hr.add(db_dept)
     try:
@@ -23,7 +24,7 @@ def create_department_synced(db_hr: Session, db_payroll: Session, dept: schemas.
         db_hr.rollback()
         raise HTTPException(status_code=400, detail=f"Lỗi tạo HR: {e}")
 
-    # [cite_start]2. Đồng bộ Payroll (Integration Role) [cite: 4]
+    # 2. Đồng bộ Payroll (Integration Role)
     try:
         db_p = DepartmentPayroll(DepartmentID=db_dept.DepartmentID, DepartmentName=db_dept.DepartmentName)
         db_payroll.add(db_p)
@@ -54,15 +55,16 @@ def update_department_synced(db_hr: Session, db_payroll: Session, dept_id: int, 
 
 def delete_department(db_hr: Session, db_payroll: Session, dept_id: int):
     """
-    [cite_start]Xóa phòng ban với Ràng buộc dữ liệu[cite: 3].
+    [QUAN TRỌNG] Xóa phòng ban với Ràng buộc dữ liệu.
     """
     # 1. KIỂM TRA RÀNG BUỘC: Có nhân viên nào thuộc phòng này không?
     has_employees = db_hr.query(EmployeeHR).filter(EmployeeHR.DepartmentID == dept_id).first()
+    
     if has_employees:
-        # Chặn hành động xóa
+        # [UPDATE] Ném lỗi 400 kèm thông báo chi tiết để Frontend hiển thị Toast
         raise HTTPException(
             status_code=400, 
-            detail=f"Không thể xóa: Vẫn còn nhân viên đang thuộc phòng ban này (ID: {dept_id})."
+            detail=f"KHÔNG THỂ XÓA: Phòng ban này đang có nhân viên (ID: {dept_id}). Vui lòng điều chuyển nhân viên trước."
         )
 
     # 2. Xóa Payroll trước (Khóa ngoại)
@@ -118,14 +120,14 @@ def update_position_synced(db_hr: Session, db_payroll: Session, pos_id: int, upd
 
 def delete_position(db_hr: Session, db_payroll: Session, pos_id: int):
     """
-    [cite_start]Xóa chức vụ với Ràng buộc dữ liệu[cite: 3].
+    [QUAN TRỌNG] Xóa chức vụ với Ràng buộc dữ liệu.
     """
     # 1. KIỂM TRA RÀNG BUỘC
     has_employees = db_hr.query(EmployeeHR).filter(EmployeeHR.PositionID == pos_id).first()
     if has_employees:
         raise HTTPException(
             status_code=400, 
-            detail=f"Không thể xóa: Vẫn còn nhân viên giữ chức vụ này (ID: {pos_id})."
+            detail=f"KHÔNG THỂ XÓA: Đang có nhân viên giữ chức vụ này (ID: {pos_id})."
         )
 
     # 2. Delete Payroll & HR

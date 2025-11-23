@@ -9,7 +9,10 @@ def get_salary_history(db_payroll: Session, employee_id: int):
     return db_payroll.query(Salary).filter(Salary.EmployeeID == employee_id).order_by(Salary.SalaryMonth.desc()).all()
 
 def get_attendance_data(db_payroll: Session, employee_id: int):
-    """Lấy dữ liệu chấm công (Ngày công, nghỉ phép)."""
+    """
+    [Data Source: MySQL]
+    Lấy dữ liệu chấm công chi tiết (Ngày công, nghỉ phép, vắng mặt).
+    """
     return db_payroll.query(Attendance).filter(
         (Attendance.EmployeeID == employee_id)
     ).order_by(Attendance.AttendanceMonth.desc()).all()

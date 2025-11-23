@@ -5,7 +5,7 @@ from sqlalchemy import or_
 from models import (
     EmployeeHR, EmployeePayroll, DepartmentPayroll, PositionPayroll,
     DepartmentHR, PositionHR, Salary, Attendance, Dividend,
-    User as AuthUser
+    User as AuthUser, Shareholder # [UPDATE] Import Shareholder
 )
 import schemas
 from auth.auth import get_user_role as get_role_from_hr
@@ -191,19 +191,30 @@ def delete_employee_synced(db_hr: Session, db_payroll: Session, db_auth: Session
     """
     Xóa nhân viên với kiểm tra ràng buộc.
     """
+    # [UPDATE] RÀNG BUỘC CỔ ĐÔNG (Quan trọng cho HR Manager)
+    is_shareholder = db_auth.query(Shareholder).filter(
+        Shareholder.employee_id == employee_id, 
+        Shareholder.shares > 0
+    ).first()
+    if is_shareholder:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"KHÔNG THỂ XÓA: Nhân viên đang là Cổ đông ({is_shareholder.shares} CP). Vui lòng thu hồi cổ phần trước."
+        )
+
     # 1. RÀNG BUỘC 1: CỔ TỨC (HUMAN)
     if db_hr.query(Dividend).filter(Dividend.EmployeeID == employee_id).first():
-        raise HTTPException(status_code=400, detail=f"Không thể xóa: Nhân viên (ID {employee_id}) có lịch sử nhận Cổ tức.")
+        raise HTTPException(status_code=400, detail=f"KHÔNG THỂ XÓA: Nhân viên có lịch sử nhận Cổ tức.")
 
     # 2. RÀNG BUỘC 2: LƯƠNG (PAYROLL)
-    # Lưu ý: Có thể cho phép xóa nếu lương = 0 hoặc cũ, nhưng an toàn nhất là chặn
     if db_payroll.query(Salary).filter(Salary.EmployeeID == employee_id).first():
-         raise HTTPException(status_code=400, detail=f"Không thể xóa: Nhân viên (ID {employee_id}) có dữ liệu Lương.")
+         raise HTTPException(status_code=400, detail=f"KHÔNG THỂ XÓA: Nhân viên có dữ liệu Lương.")
 
     # 3. Tiến hành xóa (Auth -> Payroll -> HR)
     try:
         # Auth
         db_auth.query(AuthUser).filter(AuthUser.employee_id_link == employee_id).delete()
+        db_auth.query(Shareholder).filter(Shareholder.employee_id == employee_id).delete() # Xóa record cổ đông rỗng nếu có
         db_auth.commit()
 
         # Payroll
@@ -216,8 +227,6 @@ def delete_employee_synced(db_hr: Session, db_payroll: Session, db_auth: Session
         db_hr.commit()
         
     except Exception as e:
-        # Trong thực tế cần logic rollback phức tạp hơn (Distributed Transaction), 
-        # ở đây ta chấp nhận rủi ro không đồng bộ nếu crash giữa chừng nhưng log ra lỗi.
         print(f"Error deleting employee {employee_id}: {e}")
         raise HTTPException(status_code=500, detail="Lỗi hệ thống khi xóa dữ liệu.")
 

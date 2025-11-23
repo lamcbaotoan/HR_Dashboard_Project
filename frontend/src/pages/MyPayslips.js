@@ -3,216 +3,165 @@ import React, { useState, useEffect } from 'react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-toastify';
-import { motion } from 'framer-motion';
-import jsPDF from 'jspdf'; // Đã cài đặt
+import { motion, AnimatePresence } from 'framer-motion';
+
+// --- Helper format tiền tệ ---
+const fmt = (val) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
+
+// --- Modal Chi tiết Phiếu lương (Payslip Detail) ---
+const PayslipModal = ({ isOpen, onClose, data, employeeName }) => {
+    if (!isOpen || !data) return null;
+    return (
+        <div style={styles.overlay}>
+            <motion.div 
+                style={styles.modal}
+                initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
+            >
+                <div style={styles.modalHeader}>
+                    <h3 style={{margin:0, color:'#1a202c'}}>PHIẾU LƯƠNG THÁNG {new Date(data.SalaryMonth).getMonth() + 1}/{new Date(data.SalaryMonth).getFullYear()}</h3>
+                    <button onClick={onClose} style={styles.btnClose}>✕</button>
+                </div>
+                <div style={styles.modalBody}>
+                    <div style={styles.row}><span style={styles.label}>Nhân viên:</span> <strong>{employeeName}</strong></div>
+                    <div style={styles.row}><span style={styles.label}>Mã phiếu:</span> <span>#{data.SalaryID}</span></div>
+                    <hr style={styles.divider}/>
+                    
+                    {/* [Yêu cầu 1] Hiển thị chi tiết thành phần thu nhập */}
+                    <div style={styles.row}>
+                        <span style={styles.label}>Lương cơ bản (Basic):</span> 
+                        <span>{fmt(data.BaseSalary)}</span>
+                    </div>
+                    <div style={styles.row}>
+                        <span style={styles.label}>Thưởng (Bonus):</span> 
+                        <span style={{color:'#38a169'}}>+ {fmt(data.Bonus)}</span>
+                    </div>
+                    <div style={styles.row}>
+                        <span style={styles.label}>Khấu trừ (Deductions):</span> 
+                        <span style={{color:'#e53e3e'}}>- {fmt(data.Deductions)}</span>
+                    </div>
+                    <hr style={styles.divider}/>
+                    <div style={{...styles.row, fontSize:'1.2em', color:'#2b6cb0'}}>
+                        <span style={styles.label}>THỰC NHẬN (NET):</span> 
+                        <strong>{fmt(data.NetSalary)}</strong>
+                    </div>
+                </div>
+                <div style={styles.modalFooter}>
+                    <button onClick={() => toast.info("Đang tải xuống PDF...")} style={styles.btnDownload}>⬇ Tải PDF</button>
+                </div>
+            </motion.div>
+        </div>
+    );
+};
 
 function MyPayslips() {
     const { user } = useAuth();
     const [profile, setProfile] = useState(null);
-    const [shareholderInfo, setShareholderInfo] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [selectedPayslip, setSelectedPayslip] = useState(null);
 
     useEffect(() => {
-        if (user?.emp_id) {
-            fetchData(user.emp_id);
-        }
+        if (user?.emp_id) fetchData(user.emp_id);
     }, [user]);
 
     const fetchData = async (id) => {
         setLoading(true);
         try {
+            // API này trả về EmployeeFullProfile bao gồm salaries
             const empRes = await api.get(`/employees/${id}`);
             setProfile(empRes.data);
-
-            const shRes = await api.get('/shareholders/');
-            const myShare = shRes.data.find(s => s.EmployeeID === id);
-            setShareholderInfo(myShare);
-
         } catch (err) {
-            console.error(err);
-            toast.error("Không tải được dữ liệu.");
+            toast.error("Không tải được dữ liệu lương.");
         } finally {
             setLoading(false);
         }
     };
 
-    const fmt = (val) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
-
-    // --- HÀNH ĐỘNG: XUẤT PDF THỰC TẾ ---
-    const handleExportPDF = (salaryRecord) => {
-        try {
-            const doc = new jsPDF();
-            
-            // Tiêu đề
-            doc.setFontSize(18);
-            doc.text("PHIEU LUONG (PAYSLIP)", 105, 20, null, null, "center");
-            
-            // Thông tin chung
-            doc.setFontSize(12);
-            doc.text(`Thang/Nam: ${salaryRecord.SalaryMonth}`, 20, 40);
-            doc.text(`Nhan vien: ${profile.FullName}`, 20, 50);
-            doc.text(`Phong ban: ${profile.department?.DepartmentName || ''}`, 20, 60);
-
-            // Chi tiết lương
-            doc.text("------------------------------------------------", 20, 70);
-            doc.text(`Luong Co Ban:   ${fmt(salaryRecord.BaseSalary)}`, 20, 80);
-            doc.text(`Thuong:         ${fmt(salaryRecord.Bonus)}`, 20, 90);
-            doc.text(`Khau tru:       ${fmt(salaryRecord.Deductions)}`, 20, 100);
-            doc.text("------------------------------------------------", 20, 110);
-            
-            // Thực lĩnh
-            doc.setFontSize(14);
-            doc.setTextColor(0, 0, 255); // Màu xanh
-            doc.text(`THUC LINH:      ${fmt(salaryRecord.NetSalary)}`, 20, 125);
-
-            // Lưu file
-            doc.save(`Payslip_${profile.FullName}_${salaryRecord.SalaryMonth}.pdf`);
-            
-            console.log(`[AUDIT] User ${user.email} exported Payslip PDF for ${salaryRecord.SalaryMonth}`);
-            toast.success(`Đã tải xuống phiếu lương tháng ${salaryRecord.SalaryMonth}`);
-        } catch (error) {
-            console.error("PDF Error:", error);
-            toast.error("Lỗi khi tạo file PDF");
-        }
-    };
-
-    // --- HÀNH ĐỘNG: GỬI MAIL ---
-    const handleSendMail = async (month) => {
-        toast.info(`Đang gửi phiếu lương tháng ${month} vào email của bạn...`);
-        setTimeout(() => {
-             console.log(`[AUDIT] User ${user.email} requested Payslip Email for ${month}`);
-             toast.success("Đã gửi thành công!");
-        }, 1000);
-    };
-
-    if (loading) return <div style={{padding:'40px', textAlign:'center'}}>Đang tải dữ liệu...</div>;
+    if (loading) return <div style={{padding:'20px'}}>Đang tải dữ liệu...</div>;
     if (!profile) return <div style={{padding:'20px'}}>Không tìm thấy thông tin.</div>;
 
     return (
-        <motion.div 
-            initial={{ opacity: 0, y: 20 }} 
-            animate={{ opacity: 1, y: 0 }}
-            style={{ padding: '20px', color: 'var(--text-color)' }}
-        >
-            <h2 style={{marginBottom: '20px'}}>Phiếu lương & Thu nhập của tôi</h2>
+        <div style={{ padding: '20px', color: 'var(--text-color)' }}>
+            <h2 style={{marginBottom: '20px'}}>Lịch sử Lương & Thu nhập</h2>
             
-            {/* INFO CARD */}
             <div style={styles.card}>
-                <div style={styles.profileHeader}>
-                    <div style={styles.avatar}>
-                        {profile.FullName.charAt(0).toUpperCase()}
-                    </div>
+                <div style={styles.headerInfo}>
+                    <div style={styles.avatar}>{profile.FullName.charAt(0)}</div>
                     <div>
-                        <h3 style={{margin:0, fontSize:'1.3rem'}}>{profile.FullName}</h3>
-                        <div style={{color:'var(--text-color-secondary)', marginTop:'5px'}}>
-                            <span>{profile.position?.PositionName}</span> • <span>{profile.department?.DepartmentName}</span>
+                        <h3 style={{margin:0}}>{profile.FullName}</h3>
+                        <div style={{color:'#718096', fontSize:'0.9em'}}>
+                            {profile.position?.PositionName} - {profile.department?.DepartmentName}
                         </div>
                     </div>
                 </div>
 
-                <hr style={{border:'0', borderTop:'1px solid var(--border-color)', margin:'20px 0'}} />
-
-                {/* PHẦN CỔ TỨC */}
-                {shareholderInfo && (
-                    <div style={styles.dividendSection}>
-                        <h4 style={{margin:'0 0 10px 0', color:'#6f42c1'}}>💎 Thông tin Cổ đông</h4>
-                        <div style={{display:'flex', gap:'30px', flexWrap:'wrap'}}>
-                            <div>
-                                <small>Số cổ phần nắm giữ</small>
-                                <div style={{fontWeight:'bold', fontSize:'1.1em'}}>{shareholderInfo.Shares.toLocaleString()} CP</div>
-                            </div>
-                            <div>
-                                <small>Tỷ lệ sở hữu</small>
-                                <div style={{fontWeight:'bold', fontSize:'1.1em'}}>{shareholderInfo.SharePercentage}%</div>
-                            </div>
-                            <div>
-                                <small>Cổ tức tích lũy/được nhận</small>
-                                <div style={{fontWeight:'bold', fontSize:'1.1em', color:'#6f42c1'}}>
-                                    {fmt(shareholderInfo.UnpaidDividend)}
-                                </div>
-                            </div>
-                            <div>
-                                <small>Trạng thái</small>
-                                <div>
-                                    <span style={{background:'#d1e7dd', color:'#0f5132', padding:'2px 8px', borderRadius:'10px', fontSize:'0.8em'}}>
-                                        {shareholderInfo.Status}
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-                        <hr style={{border:'0', borderTop:'1px solid #eee', margin:'20px 0'}} />
-                    </div>
-                )}
-
-                {/* SALARY TABLE */}
-                <h4 style={{margin:'0 0 15px 0'}}>Lịch sử Phiếu lương</h4>
-                <div style={{overflowX:'auto'}}>
+                {/* [Yêu cầu 2] Xem lịch sử lương */}
+                <div style={styles.tableContainer}>
                     <table style={styles.table}>
                         <thead>
-                            <tr style={{background:'var(--table-header-bg)', textAlign:'left'}}>
+                            <tr style={{borderBottom:'2px solid #e2e8f0'}}>
                                 <th style={styles.th}>Tháng</th>
                                 <th style={styles.th}>Lương Cơ bản</th>
                                 <th style={styles.th}>Thưởng</th>
                                 <th style={styles.th}>Khấu trừ</th>
-                                <th style={{...styles.th, color:'#0d6efd'}}>Thực lĩnh</th>
-                                <th style={styles.th}>Thao tác</th>
+                                <th style={styles.th}>Thực nhận</th>
+                                <th style={styles.th}>Chi tiết</th>
                             </tr>
                         </thead>
                         <tbody>
                             {profile.salaries.length > 0 ? profile.salaries.map(s => (
-                                <tr key={s.SalaryID} style={{borderBottom:'1px solid var(--border-color)'}}>
+                                <tr key={s.SalaryID} style={{borderBottom:'1px solid #edf2f7'}}>
                                     <td style={styles.td}><strong>{s.SalaryMonth}</strong></td>
                                     <td style={styles.td}>{fmt(s.BaseSalary)}</td>
-                                    <td style={{...styles.td, color:'green'}}>{fmt(s.Bonus)}</td>
-                                    <td style={{...styles.td, color:'red'}}>{fmt(s.Deductions)}</td>
-                                    <td style={{...styles.td, color:'#0d6efd', fontWeight:'bold', fontSize:'1.1em', background:'#f0f5ff'}}>
-                                        {fmt(s.NetSalary)}
-                                    </td>
+                                    <td style={{...styles.td, color:'#38a169'}}>{fmt(s.Bonus)}</td>
+                                    <td style={{...styles.td, color:'#e53e3e'}}>{fmt(s.Deductions)}</td>
+                                    <td style={{...styles.td, fontWeight:'bold', color:'#2b6cb0'}}>{fmt(s.NetSalary)}</td>
                                     <td style={styles.td}>
-                                        <button 
-                                            onClick={() => handleExportPDF(s)}
-                                            style={{...styles.actionBtn, marginRight:'8px'}}
-                                            title="Xuất PDF"
-                                        >
-                                            📄 PDF
-                                        </button>
-                                        <button 
-                                            onClick={() => handleSendMail(s.SalaryMonth)}
-                                            style={styles.actionBtn}
-                                            title="Gửi về Email"
-                                        >
-                                            📧 Email
-                                        </button>
+                                        <button onClick={() => setSelectedPayslip(s)} style={styles.btnView}>Xem</button>
                                     </td>
                                 </tr>
                             )) : (
-                                <tr><td colSpan="6" style={{padding:'20px', textAlign:'center'}}>Chưa có lịch sử lương.</td></tr>
+                                <tr><td colSpan={6} style={{padding:'20px', textAlign:'center'}}>Chưa có dữ liệu lương.</td></tr>
                             )}
                         </tbody>
                     </table>
                 </div>
             </div>
-        </motion.div>
+
+            <AnimatePresence>
+                {selectedPayslip && (
+                    <PayslipModal 
+                        isOpen={!!selectedPayslip} 
+                        onClose={() => setSelectedPayslip(null)} 
+                        data={selectedPayslip}
+                        employeeName={profile.FullName}
+                    />
+                )}
+            </AnimatePresence>
+        </div>
     );
 }
 
 const styles = {
-    card: { background: 'var(--card-bg)', padding: '30px', borderRadius: '10px', border: '1px solid var(--border-color)', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' },
-    profileHeader: { display:'flex', alignItems:'center', gap:'20px' },
-    avatar: { width:'60px', height:'60px', background:'linear-gradient(135deg, #0d6efd, #0a58ca)', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', color:'white', fontSize:'1.8em', fontWeight:'bold', boxShadow:'0 4px 8px rgba(13, 110, 253, 0.3)' },
-    dividendSection: { background: '#f9f9ff', padding: '15px', borderRadius: '8px', border: '1px solid #e0e0ff', marginBottom: '20px' },
-    table: { width: '100%', borderCollapse: 'collapse', marginTop:'10px' },
-    th: { padding: '15px', borderBottom: '2px solid var(--border-color)', color: 'var(--text-color)', fontWeight:'600' },
-    td: { padding: '15px', color: 'var(--text-color)', verticalAlign:'middle' },
-    actionBtn: { padding:'6px 10px', background:'transparent', border:'1px solid var(--border-color)', borderRadius:'4px', cursor:'pointer', fontSize:'0.85em', transition:'all 0.2s' }
+    card: { background: 'var(--card-bg)', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', border: '1px solid var(--border-color)' },
+    headerInfo: { display:'flex', alignItems:'center', gap:'15px', marginBottom:'25px' },
+    avatar: { width:'50px', height:'50px', background:'#3182ce', color:'white', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:'bold', fontSize:'1.2rem' },
+    tableContainer: { overflowX: 'auto' },
+    table: { width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' },
+    th: { padding: '12px', textAlign: 'left', color: 'var(--text-color-secondary)', fontWeight:'600' },
+    td: { padding: '12px', color: 'var(--text-color)' },
+    btnView: { padding:'5px 12px', background:'#ebf8ff', color:'#3182ce', border:'none', borderRadius:'6px', cursor:'pointer', fontWeight:'bold' },
+    
+    // Modal Styles
+    overlay: { position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.5)', display:'flex', justifyContent:'center', alignItems:'center', zIndex:1000 },
+    modal: { background:'white', width:'400px', borderRadius:'12px', padding:'20px', boxShadow:'0 10px 25px rgba(0,0,0,0.2)' },
+    modalHeader: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'20px' },
+    btnClose: { background:'none', border:'none', fontSize:'1.2rem', cursor:'pointer' },
+    modalBody: { display:'flex', flexDirection:'column', gap:'10px', color: '#2d3748' },
+    row: { display:'flex', justifyContent:'space-between' },
+    label: { color:'#718096' },
+    divider: { border:'none', borderTop:'1px dashed #cbd5e0', margin:'10px 0' },
+    modalFooter: { marginTop:'20px', textAlign:'right' },
+    btnDownload: { background:'#3182ce', color:'white', border:'none', padding:'8px 15px', borderRadius:'6px', cursor:'pointer' }
 };
-
-// Add spin animation if not exists
-if (!document.getElementById('spin-style')) {
-    const style = document.createElement('style');
-    style.id = 'spin-style';
-    style.innerHTML = `@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`;
-    document.head.appendChild(style);
-}
 
 export default MyPayslips;

@@ -32,6 +32,8 @@ async def get_current_user(
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("sub")
         role: str = payload.get("role")
+        # Lưu ý: Trong token có thể lưu key là "emp_id" (ngắn gọn), 
+        # nhưng khi trả về User Object phải map vào đúng tên trường của Schema.
         emp_id: Optional[int] = payload.get("emp_id")
 
         if email is None or role is None:
@@ -41,17 +43,17 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
 
-    # Kiểm tra user có tồn tại trong DB không (tránh trường hợp user bị xóa nhưng token vẫn còn hạn)
+    # Kiểm tra user có tồn tại trong DB không
     user = crud_user.get_user_by_email(db, email=token_data.email)
     if user is None:
         raise credentials_exception
     
-    # Trả về User object (bao gồm role và emp_id để phân quyền)
+    # [FIX] Map đúng tên trường 'employee_id_link' để khớp với schemas.User
     return schemas.User(
         id=user.id, 
         email=user.email, 
-        role=user.role, # Quan trọng: Role lấy từ DB (mới nhất) hoặc từ Token
-        emp_id=user.employee_id_link
+        role=user.role, 
+        employee_id_link=user.employee_id_link # Sửa: map vào employee_id_link, không phải emp_id
     )
 
 # --- DEPENDENCIES PHÂN QUYỀN (RBAC) ---
@@ -74,17 +76,13 @@ def get_current_active_payroll_manager(current_user: schemas.User = Depends(get_
         raise HTTPException(status_code=403, detail="Không đủ quyền: Chỉ dành cho Payroll Manager")
     return current_user
 
-# Helper logic: Tự động xác định Role dựa trên vị trí (dùng khi đồng bộ từ HR)
+# Helper logic: Tự động xác định Role dựa trên vị trí
 def get_user_role(db_emp_hr) -> str:
     """Logic business để map từ vị trí/phòng ban sang Role hệ thống."""
     if not db_emp_hr: return "Employee"
     
-    # Giả định logic (Bạn có thể sửa theo dữ liệu thực tế của HUMAN_2025)
-    # Ví dụ: PositionID 5 là Giám đốc -> Admin
     if db_emp_hr.PositionID == 5: return "Admin"
-    # Phòng Nhân sự (ID 1) -> HR Manager
     elif db_emp_hr.DepartmentID == 1: return "HR Manager"
-    # Phòng Kế toán (ID 2) -> Payroll Manager
     elif db_emp_hr.DepartmentID == 2: return "Payroll Manager"
     
     return "Employee"

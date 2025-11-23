@@ -26,7 +26,7 @@ function MyAttendance() {
     const fetchAttendanceData = async (id) => {
         setLoading(true);
         try {
-            // Lấy dữ liệu chấm công từ MySQL thông qua API Payroll
+            // [Data Source] Gọi API lấy dữ liệu từ MySQL (PAYROLL DB)
             const res = await api.get(`/payroll/${id}/attendance`);
             setAttendanceHistory(res.data);
 
@@ -41,7 +41,7 @@ function MyAttendance() {
 
         } catch (err) {
             console.error(err);
-            toast.error("Không thể tải dữ liệu chấm công.");
+            toast.error("Không thể tải dữ liệu chấm công từ hệ thống Payroll.");
         } finally {
             setLoading(false);
         }
@@ -58,7 +58,7 @@ function MyAttendance() {
         }
     };
 
-    // Hạn mức nghỉ phép giả định
+    // Hạn mức nghỉ phép (Giả định Business Rule: 12 ngày/năm)
     const MAX_LEAVE_YEAR = 12;
     const leaveRemaining = MAX_LEAVE_YEAR - stats.leave;
 
@@ -72,24 +72,36 @@ function MyAttendance() {
 
             {/* --- PHẦN 1: THỐNG KÊ TỔNG QUAN (Dữ liệu MySQL) --- */}
             <div style={styles.statsGrid}>
+                {/* Workdays */}
                 <div style={styles.statCard}>
-                    <div style={styles.statTitle}>Tổng Ngày công</div>
-                    <div style={{...styles.statValue, color:'#0d6efd'}}>{loading ? '...' : stats.worked}</div>
-                    <div style={styles.statSub}>Dữ liệu thực tế từ MySQL</div>
+                    <div style={styles.statTitle}>Ngày công thực tế</div>
+                    <div style={{...styles.statValue, color:'#0d6efd'}}>
+                        {loading ? '...' : stats.worked}
+                    </div>
+                    <div style={styles.statSub}>Dữ liệu từ MySQL (Payroll)</div>
                 </div>
+
+                {/* Leave Days (Có cảnh báo) */}
                 <div style={styles.statCard}>
-                    <div style={styles.statTitle}>Đã nghỉ phép</div>
+                    <div style={styles.statTitle}>Ngày phép đã dùng</div>
                     <div style={{...styles.statValue, color: stats.leave > MAX_LEAVE_YEAR ? 'red' : '#e6a800'}}>
                         {loading ? '...' : `${stats.leave} / ${MAX_LEAVE_YEAR}`}
                     </div>
                     <div style={styles.statSub}>
-                        {leaveRemaining < 0 ? 'Đã vượt hạn mức!' : `Còn lại ${leaveRemaining} ngày`}
+                        {leaveRemaining < 0 ? 
+                            <span style={{color:'red', fontWeight:'bold'}}>⚠️ Vượt quy định {Math.abs(leaveRemaining)} ngày</span> : 
+                            `Còn lại ${leaveRemaining} ngày`
+                        }
                     </div>
                 </div>
+
+                {/* Absences */}
                 <div style={styles.statCard}>
                     <div style={styles.statTitle}>Vắng mặt (Không phép)</div>
-                    <div style={{...styles.statValue, color:'red'}}>{loading ? '...' : stats.absent}</div>
-                    <div style={styles.statSub}>Cần giải trình nếu > 0</div>
+                    <div style={{...styles.statValue, color:'red'}}>
+                        {loading ? '...' : stats.absent}
+                    </div>
+                    <div style={styles.statSub}>Ảnh hưởng trực tiếp đến lương</div>
                 </div>
             </div>
 
@@ -126,15 +138,15 @@ function MyAttendance() {
 
                 {/* --- PHẦN 3: LỊCH SỬ CHẤM CÔNG CHI TIẾT --- */}
                 <div style={{ flex: 2, minWidth:'400px', background: 'var(--card-bg)', padding: '20px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                    <h3 style={{marginTop:0}}>📅 Lịch sử Chấm công (Payroll DB)</h3>
+                    <h3 style={{marginTop:0}}>📅 Chi tiết Chấm công (Payroll DB)</h3>
                     <div style={{overflowX:'auto'}}>
                         <table style={{width:'100%', borderCollapse:'collapse', fontSize:'0.9em'}}>
                             <thead>
                                 <tr style={{borderBottom:'2px solid var(--border-color)', textAlign:'left'}}>
                                     <th style={styles.th}>Tháng</th>
-                                    <th style={styles.th}>Ngày công</th>
-                                    <th style={styles.th}>Nghỉ phép</th>
-                                    <th style={styles.th}>Vắng</th>
+                                    <th style={styles.th}>Ngày công (Workdays)</th>
+                                    <th style={styles.th}>Nghỉ phép (Leave)</th>
+                                    <th style={styles.th}>Vắng (Absence)</th>
                                     <th style={styles.th}>Trạng thái</th>
                                 </tr>
                             </thead>

@@ -15,8 +15,9 @@ def get_leave_requests(
     db_auth: Session = Depends(get_db_auth),
     current_user: schemas.User = Depends(get_current_user)
 ):
+    # [FIX] Đổi emp_id -> employee_id_link
     if current_user.role == "Employee":
-        return crud_leave.get_leave_requests(db_auth, db_hr, employee_id=current_user.emp_id)
+        return crud_leave.get_leave_requests(db_auth, db_hr, employee_id=current_user.employee_id_link)
     return crud_leave.get_leave_requests(db_auth, db_hr)
 
 @router.post("/", response_model=schemas.LeaveRequest)
@@ -25,9 +26,11 @@ def create_leave_request(
     db_auth: Session = Depends(get_db_auth),
     current_user: schemas.User = Depends(get_current_user)
 ):
-    if not current_user.emp_id:
-        raise HTTPException(status_code=400, detail="Tài khoản chưa liên kết nhân viên")
-    return crud_leave.create_leave_request(db_auth, request, current_user.emp_id)
+    # [FIX] Đổi emp_id -> employee_id_link (Sửa lỗi 500 tại đây)
+    if not current_user.employee_id_link:
+        raise HTTPException(status_code=400, detail="Tài khoản chưa liên kết hồ sơ nhân viên")
+    
+    return crud_leave.create_leave_request(db_auth, request, current_user.employee_id_link)
 
 @router.put("/{request_id}/status", response_model=schemas.LeaveRequest)
 def update_leave_status(
